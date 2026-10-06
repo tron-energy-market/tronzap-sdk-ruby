@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Windows runners default to PowerShell.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: Ruby ${{ matrix.ruby }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        ruby: ['3.3', '3.4', '4.0']
+        # macOS and Windows are here for the platform-specific network and TLS error classification.
+        include:
+          - os: macos-latest
+            ruby: '4.0'
+          - os: windows-latest
+            ruby: '4.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Test
+        run: bundle exec rspec
+
+      - name: Lint
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '4.0'
+        run: bundle exec rubocop
+
+      - name: Build gem
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '4.0'
+        run: gem build tronzap-sdk.gemspec
+
+      - name: Check example syntax
+        if: matrix.os == 'ubuntu-latest'
+        run: ruby -c examples/basic_usage.rb
