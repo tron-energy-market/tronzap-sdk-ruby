@@ -141,15 +141,15 @@ RSpec.describe Tronzap::Client, "requests on the wire" do
   end
 
   it "signs the exact bytes the server received, including non-ASCII text" do
-    client.create_energy_transaction(address: SpecHelpers::ADDRESS, energy: 65_000, external_id: "заказ-№42")
+    client.create_energy_transaction(address: SpecHelpers::ADDRESS, energy: 65_000, external_id: "pedido-año-订单-😀")
     request = server.last_request
 
-    expect(JSON.parse(request.body)["external_id"]).to eq("заказ-№42")
+    expect(JSON.parse(request.body)["external_id"]).to eq("pedido-año-订单-😀")
     expect(request.headers["x-signature"]).to eq(signature(request.body))
   end
 
   it "signs with a non-ASCII secret" do
-    secret = "сек/рет+1"
+    secret = "clé/秘密+1"
     unicode_client = described_class.new(api_token: "t", api_secret: secret, base_url: server.url)
     unicode_client.get_balance
     request = server.last_request
