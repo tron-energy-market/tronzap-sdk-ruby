@@ -14,9 +14,8 @@ RSpec.describe Tronzap::Client, "response mapping" do
   describe "#get_services" do
     it "maps energy and bandwidth tiers and the activation price" do
       answer(
-        "energy" => [{ "duration" => 1, "min_amount" => 32_000, "max_amount" => 5_000_000, "min_energy" => 32_000,
-                       "max_energy" => 5_000_000, "price" => 0.0841, "price_32k" => "2.6912", "price_65k" => 5.4665,
-                       "price_131k" => 11.0171 }],
+        "energy" => [{ "duration" => 1, "min_amount" => 32_000, "max_amount" => 5_000_000, "price" => 0.0841,
+                       "price_32k" => "2.6912", "price_65k" => 5.4665, "price_131k" => 11.0171 }],
         "bandwidth" => [{ "duration" => 1, "min_amount" => 300, "max_amount" => 100_000, "price" => "1" }],
         "activate_address" => { "price" => 1.4 }
       )
@@ -29,6 +28,21 @@ RSpec.describe Tronzap::Client, "response mapping" do
       )
       expect(services.bandwidth.first.price).to eq(decimal("1"))
       expect(services.activate_address.price).to eq(decimal("1.4"))
+    end
+
+    it "fills the deprecated min_energy and max_energy from min_amount and max_amount" do
+      answer("energy" => [{ "min_amount" => 32_000, "max_amount" => 5_000_000, "min_energy" => 1,
+                            "max_energy" => 2 }])
+      rate = client.get_services.energy.first
+
+      expect([rate.min_energy, rate.max_energy]).to eq([32_000, 5_000_000])
+    end
+
+    it "prices energy per 1000 units" do
+      answer("energy" => [{ "price" => 0.03, "price_65k" => 1.95 }])
+      rate = client.get_services.energy.first
+
+      expect(rate.price * 65_000 / 1000).to eq(rate.price_65k)
     end
 
     it "keeps decimal prices exact" do
@@ -75,24 +89,39 @@ RSpec.describe Tronzap::Client, "response mapping" do
   end
 
   it "maps an energy estimate" do
-    answer("amount" => 65_000, "energy" => 64_285, "duration" => 1, "price" => 5.4665, "activation_fee" => 0,
+    answer("amount" => 65_000, "duration" => 1, "price" => 5.4665, "activation_fee" => 0,
            "total" => "5.4665", "from_address" => "TSender", "to_address" => "TRecipient",
            "contract_address" => Tronzap::USDT_CONTRACT_ADDRESS)
     estimate = client.estimate_energy(from_address: "TSender", to_address: "TRecipient")
 
-    expect(estimate.energy).to eq(64_285)
+    expect(estimate.amount).to eq(65_000)
+    expect(estimate.energy).to eq(65_000)
     expect(estimate.total).to eq(decimal("5.4665"))
     expect(estimate.activation_fee).to eq(0)
     expect(estimate.contract_address).to eq(Tronzap::USDT_CONTRACT_ADDRESS)
   end
 
+  it "fills the deprecated estimate energy from amount" do
+    answer("amount" => 65_000, "energy" => 64_285)
+
+    expect(client.estimate_energy(from_address: "TSender", to_address: "TRecipient").energy).to eq(65_000)
+  end
+
   it "maps a calculation, reading the service from the type field" do
-    answer("address" => "TAddress", "type" => "energy", "amount" => 65_000, "energy" => 65_000, "duration" => 1,
+    answer("address" => "TAddress", "type" => "energy", "amount" => 65_000, "duration" => 1,
            "price" => 5.4665, "activation_fee" => 1.4, "total" => 6.8665)
     calculation = client.calculate(address: "TAddress", energy: 65_000)
 
     expect(calculation.service).to eq(:energy)
+    expect(calculation.amount).to eq(65_000)
+    expect(calculation.energy).to eq(65_000)
     expect(calculation.total).to eq(decimal("6.8665"))
+  end
+
+  it "fills the deprecated calculation energy from amount" do
+    answer("amount" => 65_000, "energy" => 64_285)
+
+    expect(client.calculate(address: "TAddress", energy: 65_000).energy).to eq(65_000)
   end
 
   describe "transactions" do

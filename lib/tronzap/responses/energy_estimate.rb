@@ -5,9 +5,10 @@ module Tronzap
     # The energy a token transfer needs and what that energy costs.
     #
     # @!attribute [r] amount
-    #   @return [Integer] the amount of energy the price applies to
+    #   @return [Integer] the energy the transfer needs, which the price applies to
     # @!attribute [r] energy
-    #   @return [Integer] the energy the transfer needs
+    #   @deprecated Use {#amount}.
+    #   @return [Integer] the same value as {#amount}
     # @!attribute [r] duration
     #   @return [Integer] rental duration in hours
     # @!attribute [r] price
@@ -27,9 +28,10 @@ module Tronzap
       # @api private
       def self.from_api(value)
         data = Coerce.object(value, "result")
+        amount = Coerce.integer(data["amount"], "amount")
         new(
-          amount: Coerce.integer(data["amount"], "amount"),
-          energy: Coerce.integer(data["energy"], "energy"),
+          amount: amount,
+          energy: amount,
           duration: Coerce.integer(data["duration"], "duration"),
           price: Coerce.decimal(data["price"], "price"),
           activation_fee: Coerce.decimal(data["activation_fee"], "activation_fee"),

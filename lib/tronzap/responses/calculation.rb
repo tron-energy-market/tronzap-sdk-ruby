@@ -11,7 +11,8 @@ module Tronzap
     # @!attribute [r] amount
     #   @return [Integer] the amount priced
     # @!attribute [r] energy
-    #   @return [Integer] the energy priced
+    #   @deprecated Use {#amount}.
+    #   @return [Integer] the same value as {#amount}
     # @!attribute [r] duration
     #   @return [Integer] rental duration in hours
     # @!attribute [r] price
@@ -24,11 +25,12 @@ module Tronzap
       # @api private
       def self.from_api(value)
         data = Coerce.object(value, "result")
+        amount = Coerce.integer(data["amount"], "amount")
         new(
           address: Coerce.text(data["address"], "address"),
           service: Coerce.enum(data["type"], Models::SERVICES, "type"),
-          amount: Coerce.integer(data["amount"], "amount"),
-          energy: Coerce.integer(data["energy"], "energy"),
+          amount: amount,
+          energy: amount,
           duration: Coerce.integer(data["duration"], "duration"),
           price: Coerce.decimal(data["price"], "price"),
           activation_fee: Coerce.decimal(data["activation_fee"], "activation_fee"),

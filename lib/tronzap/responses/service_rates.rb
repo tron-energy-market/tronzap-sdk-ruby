@@ -4,8 +4,9 @@ module Tronzap
   module Responses
     # The resources on sale and their current prices.
     #
-    # Energy is priced per unit and bandwidth per 1000 units: {Models::EnergyRate#price} × 65000 is the cost of
-    # 65000 energy, while 345 bandwidth at a {Models::BandwidthRate#price} of 1 costs 0.345.
+    # Energy and bandwidth are both priced per 1000 units, so a purchase costs price × amount / 1000: 65000 energy
+    # at a {Models::EnergyRate#price} of 0.03 costs 1.95, and 345 bandwidth at a {Models::BandwidthRate#price} of 1
+    # costs 0.345.
     #
     # @!attribute [r] energy
     #   @return [Array<Models::EnergyRate>] energy price tiers

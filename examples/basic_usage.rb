@@ -75,7 +75,7 @@ end
 step.call("get_services") do
   services = client.get_services
   services.energy.each do |rate|
-    puts "  energy #{rate.duration}h #{rate.min_energy}..#{rate.max_energy} at #{money(rate.price)} per unit " \
+    puts "  energy #{rate.duration}h #{rate.min_amount}..#{rate.max_amount} at #{money(rate.price)} per 1000 units " \
          "(65k = #{money(rate.price_65k)})"
   end
   services.bandwidth.each do |rate|
@@ -107,14 +107,14 @@ end
 
 optional_step.call("calculate", address) do |value|
   calculation = client.calculate(address: value, energy: ENERGY)
-  puts "  #{calculation.energy} energy for #{calculation.duration}h costs #{money(calculation.total)}"
+  puts "  #{calculation.amount} energy for #{calculation.duration}h costs #{money(calculation.total)}"
 end
 
 from = env("TRONZAP_FROM_ADDRESS")
 to = env("TRONZAP_TO_ADDRESS")
 optional_step.call("estimate_energy", to && from) do |value|
   estimate = client.estimate_energy(from_address: value, to_address: to)
-  puts "  #{estimate.energy} energy, total #{money(estimate.total)}"
+  puts "  #{estimate.amount} energy, total #{money(estimate.total)}"
 end
 
 optional_step.call("check_transaction", env("TRONZAP_TRANSACTION_ID")) do |value|

@@ -57,7 +57,7 @@ begin
 
   transaction = client.create_energy_transaction(
     address: "TRecipientAddress",
-    energy: estimate.energy,
+    energy: estimate.amount,
     duration: 1,
     external_id: "order-42",
     activate_address: true
@@ -201,7 +201,7 @@ positivos. Los valores por defecto coinciden con la API: `duration` es 1 hora y 
 historial AML empieza en la página 1 con 10 elementos.
 
 Los resultados son objetos `Data` inmutables en `Tronzap::Responses` y
-`Tronzap::Models`, no hashes: `transaction.status`, `estimate.energy`. Las
+`Tronzap::Models`, no hashes: `transaction.status`, `estimate.amount`. Las
 colecciones están congeladas y nunca son `nil`, y los valores que la API puede
 omitir son `nil`.
 
@@ -232,10 +232,10 @@ client.create_resource_bundle_transaction(
 client.create_address_activation_transaction(address: "TRecipientAddress", external_id: "activation-1")
 ```
 
-El precio de la energía es por unidad y el del ancho de banda por 1000 unidades:
-en `get_services`, `EnergyRate#price` × 65000 es el coste de 65000 de energía,
-mientras que 345 de ancho de banda con un `BandwidthRate#price` de 1 cuestan
-0.345.
+En `get_services`, los precios de la energía y del ancho de banda son ambos por
+1000 unidades, así que una compra cuesta `price × amount / 1000`: 65000 de energía
+con un `EnergyRate#price` de 0.03 cuestan 1.95, y 345 de ancho de banda con un
+`BandwidthRate#price` de 1 cuestan 0.345.
 
 Actualmente la API informa un paquete de recursos con `service` igual a `:energy`,
 no `:resource_bundle`. Consulta `params.amounts` para saber qué recursos contiene

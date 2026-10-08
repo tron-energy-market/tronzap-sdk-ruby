@@ -57,7 +57,7 @@ begin
 
   transaction = client.create_energy_transaction(
     address: "TRecipientAddress",
-    energy: estimate.energy,
+    energy: estimate.amount,
     duration: 1,
     external_id: "order-42",
     activate_address: true
@@ -201,7 +201,7 @@ client.create_energy_transaction(request)
 1 час, история AML начинается со страницы 1 по 10 элементов.
 
 Результаты — неизменяемые объекты `Data` в `Tronzap::Responses` и
-`Tronzap::Models`, а не хеши: `transaction.status`, `estimate.energy`. Коллекции
+`Tronzap::Models`, а не хеши: `transaction.status`, `estimate.amount`. Коллекции
 заморожены и никогда не бывают `nil`, а значения, которые API может не прислать,
 равны `nil`.
 
@@ -232,9 +232,9 @@ client.create_resource_bundle_transaction(
 client.create_address_activation_transaction(address: "TRecipientAddress", external_id: "activation-1")
 ```
 
-Цена энергии указана за единицу, цена bandwidth — за 1000 единиц: в
-`get_services` `EnergyRate#price` × 65000 — это стоимость 65000 энергии, а 345
-bandwidth при `BandwidthRate#price`, равном 1, стоят 0.345.
+В `get_services` цены энергии и bandwidth указаны за 1000 единиц, поэтому покупка
+стоит `price × amount / 1000`: 65000 энергии при `EnergyRate#price`, равном 0.03,
+стоят 1.95, а 345 bandwidth при `BandwidthRate#price`, равном 1, стоят 0.345.
 
 Сейчас API возвращает пакет ресурсов с `service`, равным `:energy`, а не
 `:resource_bundle`. Состав покупки смотрите в `params.amounts`.

@@ -57,7 +57,7 @@ begin
 
   transaction = client.create_energy_transaction(
     address: "TRecipientAddress",
-    energy: estimate.energy,
+    energy: estimate.amount,
     duration: 1,
     external_id: "order-42",
     activate_address: true
@@ -201,7 +201,7 @@ Defaults match the API: `duration` is 1 hour, and AML history starts at page 1
 with 10 items.
 
 Results are immutable `Data` objects in `Tronzap::Responses` and
-`Tronzap::Models`, not hashes: `transaction.status`, `estimate.energy`. Collections
+`Tronzap::Models`, not hashes: `transaction.status`, `estimate.amount`. Collections
 are frozen and never `nil`, and values the API may omit are `nil`.
 
 ### Buying resources
@@ -231,9 +231,9 @@ client.create_resource_bundle_transaction(
 client.create_address_activation_transaction(address: "TRecipientAddress", external_id: "activation-1")
 ```
 
-Energy prices are per unit, bandwidth prices are per 1000 units: in
-`get_services`, `EnergyRate#price` × 65000 is the cost of 65000 energy, while 345
-bandwidth at a `BandwidthRate#price` of 1 costs 0.345.
+Energy and bandwidth prices in `get_services` are both per 1000 units, so a
+purchase costs `price × amount / 1000`: 65000 energy at an `EnergyRate#price` of
+0.03 costs 1.95, and 345 bandwidth at a `BandwidthRate#price` of 1 costs 0.345.
 
 The API currently reports a resource bundle with `service` equal to `:energy`, not
 `:resource_bundle`. Read `params.amounts` to see which resources a transaction

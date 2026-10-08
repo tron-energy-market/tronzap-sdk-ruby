@@ -11,7 +11,7 @@ module Tronzap
     # @!attribute [r] max_energy
     #   @return [Integer] largest energy amount this rate applies to
     # @!attribute [r] price
-    #   @return [BigDecimal] price per unit of energy, in TRX
+    #   @return [BigDecimal] price per 1000 units of energy, in TRX
     # @!attribute [r] price_32k
     #   @return [BigDecimal] price of 32 000 energy, in TRX
     # @!attribute [r] price_65k
