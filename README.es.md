@@ -185,6 +185,11 @@ bibliotecas HTTP debe traducirlos el adaptador, como en el ejemplo anterior.
 | `create_aml_check(type:, network:, address:, transaction_hash: nil, direction: nil)` | `/v1/aml-checks/new` | Iniciar una verificación AML |
 | `check_aml_status(id)` | `/v1/aml-checks/check` | Estado y resultado de una verificación AML |
 | `get_aml_history(page: 1, per_page: 10, status: nil)` | `/v1/aml-checks/history` | Historial paginado de verificaciones AML |
+| `get_subscriptions` | `/v1/subscriptions` | Planes de suscripción y precios |
+| `start_subscription(subscription_id:, address:, duration_days: 0, transactions_limit: 0, external_id: nil, activate_address: false)` | `/v1/subscription/start` | Suscribir una dirección a un plan |
+| `check_subscription(id: nil, external_id: nil)` | `/v1/subscription/check` | Estado de una suscripción, por id o id externo |
+| `stop_subscription(id: nil, external_id: nil)` | `/v1/subscription/stop` | Detener una suscripción |
+| `get_subscription_history(page: 1, per_page: 10, status: nil)` | `/v1/subscriptions/history` | Historial paginado de suscripciones |
 
 Los métodos con parámetros aceptan argumentos de palabra clave o un objeto de
 solicitud de `Tronzap::Requests`, así que una solicitud se puede construir, validar
@@ -197,8 +202,10 @@ client.create_energy_transaction(request)
 
 Una solicitud se valida al crearse, así que una solicitud inválida lanza
 `ArgumentError` y nunca llega a la API. Las cantidades deben ser `Integer`
-positivos. Los valores por defecto coinciden con la API: `duration` es 1 hora y el
-historial AML empieza en la página 1 con 10 elementos.
+positivos. Los valores por defecto coinciden con la API: `duration` es 1 hora y los
+historiales AML y de suscripciones empiezan en la página 1 con 10 elementos. La
+excepción es `start_subscription`, donde `duration_days` y `transactions_limit`
+valen 0 por defecto, lo que significa sin límite.
 
 Los resultados son objetos `Data` inmutables en `Tronzap::Responses` y
 `Tronzap::Models`, no hashes: `transaction.status`, `estimate.amount`. Las
@@ -272,6 +279,39 @@ end
 completada puede tener una puntuación de 0, que no es lo mismo que no tener
 puntuación todavía.
 
+### Suscripciones
+
+Una suscripción mantiene una dirección abastecida de energía para cada transacción
+hasta que se detiene o se agotan sus días o transacciones. Elija un plan de
+`get_subscriptions` y pase su `subscription_id`, como `"unlimited_energy"`, no su
+`id` numérico. Iniciar una suscripción cobra el precio inicial del plan.
+
+```ruby
+client.get_subscriptions.each do |plan|
+  puts "#{plan.subscription_id} #{plan.initial_price.to_s("F")} #{plan.price.to_s("F")}"
+end
+
+subscription = client.start_subscription(
+  subscription_id: "unlimited_energy",
+  address: "TRecipientAddress",
+  duration_days: 30,       # 0 para no limitar el tiempo
+  transactions_limit: 0,   # 0 para no limitar
+  external_id: "subscription-42"
+)
+
+subscription = client.check_subscription(external_id: "subscription-42")
+
+subscription = client.stop_subscription(id: subscription.id)
+
+history = client.get_subscription_history(status: :active)
+```
+
+Iniciar, consultar y detener devuelven la suscripción con sus `params`; el
+historial devuelve en su lugar los contadores de uso `transactions_used`,
+`energy_used` y `total_price`, y deja `params` en `nil`. Los estados de una
+suscripción están en `Tronzap::Models::SUBSCRIPTION_STATUSES`. Una suscripción con
+límite de transacciones no se puede detener (`CANNOT_STOP_SUBSCRIPTION`).
+
 ## Gestión de errores
 
 Todo fallo de una llamada a la API es un `Tronzap::Error`. Captura una subclase
@@ -343,11 +383,11 @@ como `Tronzap::HttpError`.
 | 2 | `INVALID_SERVICE_OR_PARAMS` | Servicio o parámetros inválidos |
 | 5 | `WALLET_NOT_FOUND` | Billetera interna no encontrada. Contacta con soporte. |
 | 6 | `INSUFFICIENT_FUNDS` | Fondos insuficientes |
-| 10 | `INVALID_TRON_ADDRESS` | Dirección TRON inválida |
+| 10 | `INVALID_TRON_ADDRESS` | Dirección TRON inválida, o la dirección ya tiene una suscripción activa |
 | 11 | `INVALID_ENERGY_AMOUNT` | Cantidad de energía inválida |
 | 12 | `INVALID_DURATION` | Duración inválida |
 | 20 | `TRANSACTION_NOT_FOUND` | Transacción/suscripción no encontrada |
-| 21 | `CANNOT_STOP_SUBSCRIPTION` | No se puede detener la suscripción |
+| 21 | `CANNOT_STOP_SUBSCRIPTION` | No se puede detener la suscripción, p. ej. tiene límite de transacciones |
 | 24 | `ADDRESS_NOT_ACTIVATED` | Dirección no activada |
 | 25 | `ADDRESS_ALREADY_ACTIVATED` | Dirección ya activada |
 | 30 | `AML_CHECK_NOT_FOUND` | Verificación AML no encontrada |

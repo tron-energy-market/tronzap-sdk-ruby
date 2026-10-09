@@ -185,6 +185,11 @@ HTTP-библиотек адаптер должен преобразовать �
 | `create_aml_check(type:, network:, address:, transaction_hash: nil, direction: nil)` | `/v1/aml-checks/new` | Запустить AML-проверку |
 | `check_aml_status(id)` | `/v1/aml-checks/check` | Статус и результат AML-проверки |
 | `get_aml_history(page: 1, per_page: 10, status: nil)` | `/v1/aml-checks/history` | История AML-проверок с пагинацией |
+| `get_subscriptions` | `/v1/subscriptions` | Планы подписок и цены |
+| `start_subscription(subscription_id:, address:, duration_days: 0, transactions_limit: 0, external_id: nil, activate_address: false)` | `/v1/subscription/start` | Подписать адрес на план |
+| `check_subscription(id: nil, external_id: nil)` | `/v1/subscription/check` | Статус подписки по id или внешнему id |
+| `stop_subscription(id: nil, external_id: nil)` | `/v1/subscription/stop` | Остановить подписку |
+| `get_subscription_history(page: 1, per_page: 10, status: nil)` | `/v1/subscriptions/history` | История подписок с пагинацией |
 
 Методы с параметрами принимают либо именованные аргументы, либо объект запроса из
 `Tronzap::Requests`, поэтому запрос можно создать, проверить и передать дальше до
@@ -198,7 +203,9 @@ client.create_energy_transaction(request)
 Запрос проверяется при создании, поэтому невалидный запрос вызывает
 `ArgumentError` и никогда не доходит до API. Количества должны быть
 положительными `Integer`. Значения по умолчанию совпадают с API: `duration` —
-1 час, история AML начинается со страницы 1 по 10 элементов.
+1 час, история AML и подписок начинается со страницы 1 по 10 элементов.
+Исключение — `start_subscription`: `duration_days` и `transactions_limit` по
+умолчанию равны 0, что означает отсутствие ограничения.
 
 Результаты — неизменяемые объекты `Data` в `Tronzap::Responses` и
 `Tronzap::Models`, а не хеши: `transaction.status`, `estimate.amount`. Коллекции
@@ -268,6 +275,40 @@ end
 
 `risk_score` равен `nil`, пока проверка не завершится. У завершённой проверки score
 может быть равен 0, и это не то же самое, что отсутствие результата.
+
+### Подписки
+
+Подписка обеспечивает адрес энергией для каждой транзакции, пока её не
+остановят или не закончатся её дни или транзакции. Выберите план из
+`get_subscriptions` и передайте его `subscription_id`, например
+`"unlimited_energy"`, а не числовой `id`. Запуск подписки списывает начальную
+цену плана.
+
+```ruby
+client.get_subscriptions.each do |plan|
+  puts "#{plan.subscription_id} #{plan.initial_price.to_s("F")} #{plan.price.to_s("F")}"
+end
+
+subscription = client.start_subscription(
+  subscription_id: "unlimited_energy",
+  address: "TRecipientAddress",
+  duration_days: 30,       # 0 — без ограничения по времени
+  transactions_limit: 0,   # 0 — без ограничения
+  external_id: "subscription-42"
+)
+
+subscription = client.check_subscription(external_id: "subscription-42")
+
+subscription = client.stop_subscription(id: subscription.id)
+
+history = client.get_subscription_history(status: :active)
+```
+
+Запуск, проверка и остановка возвращают подписку с её `params`, а история
+вместо них — счётчики использования `transactions_used`, `energy_used` и
+`total_price`, и `params` в ней равен `nil`. Статусы подписки перечислены в
+`Tronzap::Models::SUBSCRIPTION_STATUSES`. Подписку с лимитом транзакций
+остановить нельзя (`CANNOT_STOP_SUBSCRIPTION`).
 
 ## Обработка ошибок
 
@@ -339,11 +380,11 @@ end
 | 2 | `INVALID_SERVICE_OR_PARAMS` | Неверный сервис или параметры |
 | 5 | `WALLET_NOT_FOUND` | Внутренний кошелёк не найден. Обратитесь в поддержку. |
 | 6 | `INSUFFICIENT_FUNDS` | Недостаточно средств |
-| 10 | `INVALID_TRON_ADDRESS` | Неверный адрес TRON |
+| 10 | `INVALID_TRON_ADDRESS` | Неверный адрес TRON, или у адреса уже есть активная подписка |
 | 11 | `INVALID_ENERGY_AMOUNT` | Неверное количество энергии |
 | 12 | `INVALID_DURATION` | Неверная длительность |
 | 20 | `TRANSACTION_NOT_FOUND` | Транзакция/подписка не найдена |
-| 21 | `CANNOT_STOP_SUBSCRIPTION` | Невозможно остановить подписку |
+| 21 | `CANNOT_STOP_SUBSCRIPTION` | Невозможно остановить подписку, например, у неё есть лимит транзакций |
 | 24 | `ADDRESS_NOT_ACTIVATED` | Адрес не активирован |
 | 25 | `ADDRESS_ALREADY_ACTIVATED` | Адрес уже активирован |
 | 30 | `AML_CHECK_NOT_FOUND` | AML-проверка не найдена |

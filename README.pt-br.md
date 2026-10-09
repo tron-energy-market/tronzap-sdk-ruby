@@ -184,6 +184,11 @@ outras bibliotecas HTTP precisam ser traduzidos pelo adaptador, como acima.
 | `create_aml_check(type:, network:, address:, transaction_hash: nil, direction: nil)` | `/v1/aml-checks/new` | Iniciar uma verificação AML |
 | `check_aml_status(id)` | `/v1/aml-checks/check` | Status e resultado de uma verificação AML |
 | `get_aml_history(page: 1, per_page: 10, status: nil)` | `/v1/aml-checks/history` | Histórico paginado de verificações AML |
+| `get_subscriptions` | `/v1/subscriptions` | Planos de assinatura e preços |
+| `start_subscription(subscription_id:, address:, duration_days: 0, transactions_limit: 0, external_id: nil, activate_address: false)` | `/v1/subscription/start` | Assinar um plano para um endereço |
+| `check_subscription(id: nil, external_id: nil)` | `/v1/subscription/check` | Status de uma assinatura, por id ou id externo |
+| `stop_subscription(id: nil, external_id: nil)` | `/v1/subscription/stop` | Parar uma assinatura |
+| `get_subscription_history(page: 1, per_page: 10, status: nil)` | `/v1/subscriptions/history` | Histórico paginado de assinaturas |
 
 Os métodos com parâmetros aceitam argumentos nomeados ou um objeto de requisição de
 `Tronzap::Requests`, então uma requisição pode ser montada, validada e repassada
@@ -196,8 +201,10 @@ client.create_energy_transaction(request)
 
 Uma requisição é validada ao ser criada, então uma requisição inválida lança
 `ArgumentError` e nunca chega à API. As quantidades devem ser valores `Integer`
-positivos. Os padrões coincidem com a API: `duration` é 1 hora e o histórico AML
-começa na página 1 com 10 itens.
+positivos. Os padrões coincidem com a API: `duration` é 1 hora e os históricos AML
+e de assinaturas começam na página 1 com 10 itens. A exceção é
+`start_subscription`, em que `duration_days` e `transactions_limit` valem 0 por
+padrão, o que significa sem limite.
 
 Os resultados são objetos `Data` imutáveis em `Tronzap::Responses` e
 `Tronzap::Models`, não hashes: `transaction.status`, `estimate.amount`. As coleções
@@ -268,6 +275,39 @@ end
 
 `risk_score` é `nil` até a verificação terminar. Uma verificação concluída pode
 ter pontuação 0, o que não é o mesmo que ainda não ter pontuação.
+
+### Assinaturas
+
+Uma assinatura mantém um endereço abastecido de energia para cada transação até
+ser parada ou esgotar seus dias ou transações. Escolha um plano de
+`get_subscriptions` e passe o seu `subscription_id`, como `"unlimited_energy"`, não
+o `id` numérico. Iniciar uma assinatura cobra o preço inicial do plano.
+
+```ruby
+client.get_subscriptions.each do |plan|
+  puts "#{plan.subscription_id} #{plan.initial_price.to_s("F")} #{plan.price.to_s("F")}"
+end
+
+subscription = client.start_subscription(
+  subscription_id: "unlimited_energy",
+  address: "TRecipientAddress",
+  duration_days: 30,       # 0 para não limitar o tempo
+  transactions_limit: 0,   # 0 para não limitar
+  external_id: "subscription-42"
+)
+
+subscription = client.check_subscription(external_id: "subscription-42")
+
+subscription = client.stop_subscription(id: subscription.id)
+
+history = client.get_subscription_history(status: :active)
+```
+
+Iniciar, consultar e parar retornam a assinatura com seus `params`; o histórico
+retorna em vez disso os contadores de uso `transactions_used`, `energy_used` e
+`total_price`, e deixa `params` como `nil`. Os status de uma assinatura estão em
+`Tronzap::Models::SUBSCRIPTION_STATUSES`. Uma assinatura com limite de transações
+não pode ser parada (`CANNOT_STOP_SUBSCRIPTION`).
 
 ## Tratamento de erros
 
@@ -340,11 +380,11 @@ diferente de zero é sempre informado como `Tronzap::ApiError`, nunca como
 | 2 | `INVALID_SERVICE_OR_PARAMS` | Serviço ou parâmetros inválidos |
 | 5 | `WALLET_NOT_FOUND` | Carteira interna não encontrada. Contate o suporte. |
 | 6 | `INSUFFICIENT_FUNDS` | Saldo insuficiente |
-| 10 | `INVALID_TRON_ADDRESS` | Endereço TRON inválido |
+| 10 | `INVALID_TRON_ADDRESS` | Endereço TRON inválido, ou o endereço já tem uma assinatura ativa |
 | 11 | `INVALID_ENERGY_AMOUNT` | Quantidade de energia inválida |
 | 12 | `INVALID_DURATION` | Duração inválida |
 | 20 | `TRANSACTION_NOT_FOUND` | Transação/assinatura não encontrada |
-| 21 | `CANNOT_STOP_SUBSCRIPTION` | Não é possível interromper a assinatura |
+| 21 | `CANNOT_STOP_SUBSCRIPTION` | Não é possível interromper a assinatura, p. ex. ela tem limite de transações |
 | 24 | `ADDRESS_NOT_ACTIVATED` | Endereço não ativado |
 | 25 | `ADDRESS_ALREADY_ACTIVATED` | Endereço já ativado |
 | 30 | `AML_CHECK_NOT_FOUND` | Verificação AML não encontrada |

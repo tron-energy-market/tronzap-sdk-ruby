@@ -123,7 +123,8 @@ module Tronzap
     WALLET_NOT_FOUND = 5
     # Insufficient funds: top up the account or request a smaller amount.
     INSUFFICIENT_FUNDS = 6
-    # Invalid TRON address: it should be a valid 34-character TRON address.
+    # Invalid TRON address: it should be a valid 34-character TRON address. Also reported when the address already
+    # has an active subscription.
     INVALID_TRON_ADDRESS = 10
     # Invalid energy amount.
     INVALID_ENERGY_AMOUNT = 11
@@ -132,7 +133,7 @@ module Tronzap
     # Transaction or subscription not found: check the transaction ID or external ID. The API reports this code
     # under the key +subscription_not_found+.
     TRANSACTION_NOT_FOUND = 20
-    # The subscription cannot be stopped right now.
+    # Cannot stop subscription, for example because it has a transactions limit.
     CANNOT_STOP_SUBSCRIPTION = 21
     # Address not activated: activate it first with an address activation transaction.
     ADDRESS_NOT_ACTIVATED = 24

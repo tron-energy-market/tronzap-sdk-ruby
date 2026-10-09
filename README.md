@@ -185,6 +185,11 @@ libraries need to be translated by the adapter, as above.
 | `create_aml_check(type:, network:, address:, transaction_hash: nil, direction: nil)` | `/v1/aml-checks/new` | Start an AML screening |
 | `check_aml_status(id)` | `/v1/aml-checks/check` | Status and result of an AML check |
 | `get_aml_history(page: 1, per_page: 10, status: nil)` | `/v1/aml-checks/history` | Paginated AML check history |
+| `get_subscriptions` | `/v1/subscriptions` | Subscription plans and prices |
+| `start_subscription(subscription_id:, address:, duration_days: 0, transactions_limit: 0, external_id: nil, activate_address: false)` | `/v1/subscription/start` | Subscribe an address to a plan |
+| `check_subscription(id: nil, external_id: nil)` | `/v1/subscription/check` | Status of a subscription, by id or external id |
+| `stop_subscription(id: nil, external_id: nil)` | `/v1/subscription/stop` | Stop a subscription |
+| `get_subscription_history(page: 1, per_page: 10, status: nil)` | `/v1/subscriptions/history` | Paginated subscription history |
 
 Methods with parameters take either keyword arguments or a request object from
 `Tronzap::Requests`, so a request can be built, validated and passed around before
@@ -197,8 +202,9 @@ client.create_energy_transaction(request)
 
 A request is validated when it is created, so an invalid one raises
 `ArgumentError` and never reaches the API. Amounts must be positive `Integer`s.
-Defaults match the API: `duration` is 1 hour, and AML history starts at page 1
-with 10 items.
+Defaults match the API: `duration` is 1 hour, and AML and subscription history
+start at page 1 with 10 items. The exception is `start_subscription`, where
+`duration_days` and `transactions_limit` default to 0, which means no limit.
 
 Results are immutable `Data` objects in `Tronzap::Responses` and
 `Tronzap::Models`, not hashes: `transaction.status`, `estimate.amount`. Collections
@@ -268,6 +274,39 @@ end
 
 `risk_score` is `nil` until screening finishes. A completed check can have a score
 of 0, which is not the same as having no score yet.
+
+### Subscriptions
+
+A subscription keeps an address supplied with energy for every transaction until
+it is stopped or runs out of days or transactions. Pick a plan from
+`get_subscriptions` and pass its `subscription_id`, such as `"unlimited_energy"`,
+not its numeric `id`. Starting a subscription charges the plan's initial price.
+
+```ruby
+client.get_subscriptions.each do |plan|
+  puts "#{plan.subscription_id} #{plan.initial_price.to_s("F")} #{plan.price.to_s("F")}"
+end
+
+subscription = client.start_subscription(
+  subscription_id: "unlimited_energy",
+  address: "TRecipientAddress",
+  duration_days: 30,       # 0 for no time limit
+  transactions_limit: 0,   # 0 for no limit
+  external_id: "subscription-42"
+)
+
+subscription = client.check_subscription(external_id: "subscription-42")
+
+subscription = client.stop_subscription(id: subscription.id)
+
+history = client.get_subscription_history(status: :active)
+```
+
+Start, check and stop return the subscription with its `params`; the history
+returns the usage counters `transactions_used`, `energy_used` and `total_price`
+instead, and leaves `params` `nil`. A subscription moves through the statuses in
+`Tronzap::Models::SUBSCRIPTION_STATUSES`. A subscription with a transactions limit
+cannot be stopped (`CANNOT_STOP_SUBSCRIPTION`).
 
 ## Error handling
 
@@ -340,11 +379,11 @@ a non-zero code is always reported as `Tronzap::ApiError`, never as
 | 2 | `INVALID_SERVICE_OR_PARAMS` | Invalid service or parameters |
 | 5 | `WALLET_NOT_FOUND` | Internal wallet not found. Contact support. |
 | 6 | `INSUFFICIENT_FUNDS` | Insufficient funds |
-| 10 | `INVALID_TRON_ADDRESS` | Invalid TRON address |
+| 10 | `INVALID_TRON_ADDRESS` | Invalid TRON address, or the address already has an active subscription |
 | 11 | `INVALID_ENERGY_AMOUNT` | Invalid energy amount |
 | 12 | `INVALID_DURATION` | Invalid duration |
 | 20 | `TRANSACTION_NOT_FOUND` | Transaction/subscription not found |
-| 21 | `CANNOT_STOP_SUBSCRIPTION` | Cannot stop subscription |
+| 21 | `CANNOT_STOP_SUBSCRIPTION` | Cannot stop subscription, e.g. it has a transactions limit |
 | 24 | `ADDRESS_NOT_ACTIVATED` | Address not activated |
 | 25 | `ADDRESS_ALREADY_ACTIVATED` | Address already activated |
 | 30 | `AML_CHECK_NOT_FOUND` | AML check not found |

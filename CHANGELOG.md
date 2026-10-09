@@ -6,6 +6,23 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Energy subscriptions: `Client#get_subscriptions`, `#start_subscription`, `#check_subscription`,
+  `#stop_subscription` and `#get_subscription_history`, with the requests `Requests::StartSubscription`,
+  `Requests::SubscriptionLookup` and `Requests::SubscriptionHistory`, the results `Responses::SubscriptionPlan`,
+  `Responses::Subscription` and `Responses::SubscriptionHistory`, `Models::SubscriptionParams` and
+  `Models::SUBSCRIPTION_STATUSES`. `get_subscriptions` returns the plans in the API's order, each with its key as
+  `subscription_id`.
+- The example program lists subscription plans and history, checks `TRONZAP_SUBSCRIPTION_ID`, and with purchases
+  allowed and `TRONZAP_SUBSCRIPTION_PLAN` set starts a one-day subscription and always stops it.
+
+### Changed
+
+- The documentation of error codes 10 and 21: `INVALID_TRON_ADDRESS` is also reported when the address already has
+  an active subscription, and `CANNOT_STOP_SUBSCRIPTION` covers, for example, a subscription with a transactions
+  limit.
+
 ### Deprecated
 
 - `Models::EnergyRate#min_energy` and `#max_energy`: use `#min_amount` and `#max_amount`. They now hold the same

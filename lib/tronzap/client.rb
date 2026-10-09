@@ -4,8 +4,8 @@ require "digest"
 require "json"
 
 module Tronzap
-  # Client for the {https://docs.tronzap.com/ TronZap API}: buy TRON energy and bandwidth, activate addresses and
-  # run AML checks.
+  # Client for the {https://docs.tronzap.com/ TronZap API}: buy TRON energy and bandwidth, activate addresses, run
+  # AML checks and manage energy subscriptions.
   #
   # A client is immutable and safe to share between threads. Create one per set of credentials.
   #
@@ -189,6 +189,65 @@ module Tronzap
     def get_aml_history(request = nil, **params)
       body = build(Requests::AmlHistory, request, params).body
       post("/v1/aml-checks/history", body) { Responses::AmlHistory.from_api(_1) }
+    end
+
+    # Subscription plans on sale, in the order the API lists them.
+    #
+    # @return [Array<Responses::SubscriptionPlan>]
+    # @raise [Error]
+    def get_subscriptions
+      post("/v1/subscriptions", {}) { Responses::SubscriptionPlan.list_from_api(_1) }
+    end
+
+    # Subscribes an address to a plan from {#get_subscriptions}. Starting a subscription charges the plan's initial
+    # price.
+    #
+    # @overload start_subscription(request)
+    #   @param request [Requests::StartSubscription]
+    # @overload start_subscription(subscription_id:, address:, duration_days: 0, transactions_limit: 0,
+    #                              external_id: nil, activate_address: false)
+    # @return [Responses::Subscription]
+    # @raise [ArgumentError, Error]
+    def start_subscription(request = nil, **params)
+      body = build(Requests::StartSubscription, request, params).body
+      post("/v1/subscription/start", body) { Responses::Subscription.from_api(_1) }
+    end
+
+    # The current state of a subscription, by its TronZap ID or by your external ID.
+    #
+    # @overload check_subscription(request)
+    #   @param request [Requests::SubscriptionLookup]
+    # @overload check_subscription(id: nil, external_id: nil)
+    # @return [Responses::Subscription]
+    # @raise [ArgumentError, Error]
+    def check_subscription(request = nil, **params)
+      body = build(Requests::SubscriptionLookup, request, params).body
+      post("/v1/subscription/check", body) { Responses::Subscription.from_api(_1) }
+    end
+
+    # Stops a subscription, by its TronZap ID or by your external ID. A subscription with a transactions limit
+    # cannot be stopped and fails with {ErrorCode::CANNOT_STOP_SUBSCRIPTION}.
+    #
+    # @overload stop_subscription(request)
+    #   @param request [Requests::SubscriptionLookup]
+    # @overload stop_subscription(id: nil, external_id: nil)
+    # @return [Responses::Subscription]
+    # @raise [ArgumentError, Error]
+    def stop_subscription(request = nil, **params)
+      body = build(Requests::SubscriptionLookup, request, params).body
+      post("/v1/subscription/stop", body) { Responses::Subscription.from_api(_1) }
+    end
+
+    # One page of your subscriptions, newest first.
+    #
+    # @overload get_subscription_history(request)
+    #   @param request [Requests::SubscriptionHistory]
+    # @overload get_subscription_history(page: 1, per_page: 10, status: nil)
+    # @return [Responses::SubscriptionHistory]
+    # @raise [ArgumentError, Error]
+    def get_subscription_history(request = nil, **params)
+      body = build(Requests::SubscriptionHistory, request, params).body
+      post("/v1/subscriptions/history", body) { Responses::SubscriptionHistory.from_api(_1) }
     end
 
     # @return [String] a description that leaves out the credentials

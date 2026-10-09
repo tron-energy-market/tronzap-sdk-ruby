@@ -10,11 +10,15 @@
 #   export TRONZAP_TO_ADDRESS=TRON_ADDRESS       # optional, with FROM_ADDRESS
 #   export TRONZAP_TRANSACTION_ID=id             # optional
 #   export TRONZAP_AML_CHECK_ID=id               # optional
+#   export TRONZAP_SUBSCRIPTION_ID=id            # optional
 #   ruby -Ilib examples/basic_usage.rb
 #
 # Setting TRONZAP_ALLOW_PURCHASES=1 additionally exercises the endpoints that create transactions and AML checks.
 # Those DEBIT THE ACCOUNT BALANCE. It is meant for verifying an integration against a development environment, and
 # it also needs TRONZAP_ADDRESS.
+#
+# Setting TRONZAP_SUBSCRIPTION_PLAN as well, for example to unlimited_energy, starts a one-day subscription to that
+# plan for TRONZAP_ADDRESS and stops it straight away. Starting one CHARGES THE PLAN'S INITIAL PRICE.
 
 require "tronzap"
 
@@ -34,6 +38,11 @@ def describe_time(timestamp)
   return "unknown" if timestamp.nil?
 
   timestamp.value ? timestamp.value.iso8601 : "UNPARSED(#{timestamp.raw})"
+end
+
+def print_subscription(subscription)
+  puts "  #{subscription.id} #{subscription.subscription_id} #{subscription.status}, " \
+       "created #{describe_time(subscription.created_at)}, expires #{describe_time(subscription.expire_at)}"
 end
 
 def print_transaction(transaction)
@@ -98,6 +107,24 @@ step.call("get_aml_history") do
   puts "  page #{history.page}, #{history.items.size} of #{history.total} check(s)"
 end
 
+step.call("get_subscriptions") do
+  client.get_subscriptions.each do |plan|
+    puts "  #{plan.subscription_id} (#{plan.name}): activation #{money(plan.activation_fee)}, " \
+         "initial #{money(plan.initial_price)}, #{money(plan.price)} per transaction, " \
+         "limit #{plan.transactions_limit} transactions, #{plan.duration_days} days"
+  end
+end
+
+step.call("get_subscription_history") do
+  history = client.get_subscription_history(per_page: 3)
+  puts "  page #{history.page}, #{history.items.size} of #{history.total} subscription(s)"
+  history.items.each do |subscription|
+    puts "  #{subscription.id} #{subscription.subscription_id} #{subscription.status}, " \
+         "#{subscription.transactions_used} transaction(s), #{subscription.energy_used} energy, " \
+         "charged #{money(subscription.total_price || BigDecimal(0))}"
+  end
+end
+
 address = env("TRONZAP_ADDRESS")
 optional_step.call("get_address_info", address) do |value|
   info = client.get_address_info(value)
@@ -124,6 +151,10 @@ end
 optional_step.call("check_aml_status", env("TRONZAP_AML_CHECK_ID")) do |value|
   check = client.check_aml_status(value)
   puts "  #{check.status}, risk #{check.risk_score ? money(check.risk_score) : "not scored yet"}"
+end
+
+optional_step.call("check_subscription", env("TRONZAP_SUBSCRIPTION_ID")) do |value|
+  print_subscription(client.check_subscription(id: value))
 end
 
 if env("TRONZAP_ALLOW_PURCHASES") != "1"
@@ -161,6 +192,19 @@ else
   step.call("create_aml_check") do
     check = client.create_aml_check(Tronzap::Requests::AmlCheck.for_address("TRX", address))
     puts "  AML check #{check.id} is #{check.status}"
+  end
+
+  optional_step.call("start_subscription, check_subscription, stop_subscription",
+                     env("TRONZAP_SUBSCRIPTION_PLAN")) do |plan|
+    subscription = client.start_subscription(subscription_id: plan, address: address, duration_days: 1,
+                                             external_id: "#{run_id}-subscription")
+    print_subscription(subscription)
+    begin
+      print_subscription(client.check_subscription(external_id: "#{run_id}-subscription"))
+    ensure
+      stopped = client.stop_subscription(id: subscription.id)
+      puts "  #{stopped.id} #{stopped.status}, stopped #{describe_time(stopped.stopped_at)}"
+    end
   end
 end
 

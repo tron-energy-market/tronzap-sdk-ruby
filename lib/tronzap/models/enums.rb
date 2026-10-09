@@ -22,5 +22,9 @@ module Tronzap
 
     # AML risk levels.
     AML_RISK_LEVELS = %i[low medium high].freeze
+
+    # Subscription states: +:new+ → +:pending+ → +:active+, then +:stopped+ or +:expired+; +:error+ when it could
+    # not be started.
+    SUBSCRIPTION_STATUSES = %i[new pending error active stopped expired].freeze
   end
 end

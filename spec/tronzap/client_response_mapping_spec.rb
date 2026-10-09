@@ -261,6 +261,125 @@ RSpec.describe Tronzap::Client, "response mapping" do
     end
   end
 
+  describe "subscriptions" do
+    let(:plan) do
+      { "id" => 8, "name" => "Unlimited Energy", "activation_fee" => 0, "initial_price" => 8, "price" => 2.8,
+        "transactions_limit" => 0, "duration_days" => 0 }
+    end
+    let(:params) do
+      { "address" => "TAddress", "duration" => 30, "transactions_limit" => 0, "activate_address" => false }
+    end
+    let(:started) do
+      { "id" => "01m4e1z3q0r7x225zc6p63m5ey", "subscription_id" => "unlimited_energy",
+        "created_at" => "2026-10-08T15:26:32+00:00", "expire_at" => "2026-11-07T15:26:32+00:00",
+        "address" => "TAddress", "status" => "active", "external_id" => "sub-1", "params" => params }
+    end
+    let(:stopped) do
+      { "id" => "01m4e1z3q0r7x225zc6p63m5ey", "subscription_id" => "unlimited_energy",
+        "created_at" => "2026-10-08T15:26:32+00:00", "stopped_at" => "2026-10-08T15:28:44+00:00",
+        "status" => "stopped", "external_id" => "sub-1", "params" => params }
+    end
+    let(:history_item) do
+      { "id" => "01m4e1z3q0r7x225zc6p63m5ey", "status" => "active", "subscription_id" => "unlimited_energy",
+        "address" => "TAddress", "transactions_limit" => 0, "transactions_used" => 4, "energy_used" => 262_000,
+        "total_price" => 13.6, "started_at" => "2026-10-08T15:26:33+00:00",
+        "renewed_at" => "2026-10-08T15:27:35+00:00", "stopped_at" => nil, "expire_at" => "2026-11-07T15:26:32+00:00",
+        "created_at" => "2026-10-08T15:26:32+00:00" }
+    end
+
+    it "maps the plans in the order the API lists them, keyed by subscription_id" do
+      answer("unlimited_energy" => plan,
+             "energy_pack_100" => { "id" => 2, "name" => "Energy Pack", "activation_fee" => "2.0",
+                                    "initial_price" => "10", "price" => "0", "transactions_limit" => 10,
+                                    "duration_days" => 5 })
+      plans = client.get_subscriptions
+
+      expect(plans.map(&:subscription_id)).to eq(%w[unlimited_energy energy_pack_100])
+      expect(plans.first).to eq(
+        Tronzap::Responses::SubscriptionPlan.new(subscription_id: "unlimited_energy", id: 8, name: "Unlimited Energy",
+                                                 activation_fee: decimal("0"), initial_price: decimal("8"),
+                                                 price: decimal("2.8"), transactions_limit: 0, duration_days: 0)
+      )
+      expect(plans.last).to have_attributes(id: 2, activation_fee: decimal("2"), transactions_limit: 10,
+                                            duration_days: 5)
+    end
+
+    it "keeps the API order of plans whose keys are not sorted" do
+      answer("zeta" => plan, "alpha" => plan, "mid" => plan)
+
+      plans = client.get_subscriptions
+
+      expect(plans.map(&:subscription_id)).to eq(%w[zeta alpha mid])
+      expect(plans).to be_frozen
+    end
+
+    [{}, []].each do |empty|
+      it "reads #{JSON.generate(empty)} as no plans" do
+        answer(empty)
+
+        expect(client.get_subscriptions).to eq([])
+      end
+    end
+
+    it "maps a started subscription" do
+      answer(started)
+      subscription = client.start_subscription(subscription_id: "unlimited_energy", address: "TAddress",
+                                               duration_days: 30, external_id: "sub-1")
+
+      expect(subscription).to have_attributes(id: "01m4e1z3q0r7x225zc6p63m5ey", subscription_id: "unlimited_energy",
+                                              external_id: "sub-1", address: "TAddress", status: :active,
+                                              transactions_used: nil, total_price: nil, stopped_at: nil)
+      expect(subscription.params).to eq(
+        Tronzap::Models::SubscriptionParams.new(address: "TAddress", duration_days: 30, transactions_limit: 0,
+                                                activate_address: false)
+      )
+      expect(subscription.created_at.value).to eq(Time.utc(2026, 10, 8, 15, 26, 32))
+      expect(subscription.expire_at.value).to eq(Time.utc(2026, 11, 7, 15, 26, 32))
+    end
+
+    it "maps a checked subscription the same as a started one" do
+      answer(started)
+      from_start = client.start_subscription(subscription_id: "unlimited_energy", address: "TAddress")
+      from_check = client.check_subscription(external_id: "sub-1")
+
+      expect(from_check).to eq(from_start)
+    end
+
+    it "maps a stopped subscription without an address or expiry" do
+      answer(stopped)
+      subscription = client.stop_subscription(id: "01m4e1z3q0r7x225zc6p63m5ey")
+
+      expect(subscription).to have_attributes(status: :stopped, address: nil, expire_at: nil)
+      expect(subscription.stopped_at.value).to eq(Time.utc(2026, 10, 8, 15, 28, 44))
+      expect(subscription.params.address).to eq("TAddress")
+    end
+
+    it "reports a subscription status this SDK does not know as :unknown" do
+      answer(started.merge("status" => "paused"))
+
+      expect(client.check_subscription(id: "sub-id").status).to eq(:unknown)
+    end
+
+    it "maps a page of history with usage counters and without params" do
+      answer("page" => 1, "per_page" => 10, "total" => 1, "items" => [history_item])
+      history = client.get_subscription_history
+      item = history.items.first
+
+      expect(history).to have_attributes(page: 1, per_page: 10, total: 1)
+      expect(item).to have_attributes(status: :active, transactions_limit: 0, transactions_used: 4,
+                                      energy_used: 262_000, total_price: decimal("13.6"), params: nil,
+                                      external_id: nil, stopped_at: nil)
+      expect(item.started_at.value).to eq(Time.utc(2026, 10, 8, 15, 26, 33))
+      expect(item.renewed_at.value).to eq(Time.utc(2026, 10, 8, 15, 27, 35))
+    end
+
+    it "reads a history total price sent as a string" do
+      answer("page" => 1, "items" => [history_item.merge("total_price" => "8.00")])
+
+      expect(client.get_subscription_history.items.first.total_price).to eq(decimal("8"))
+    end
+  end
+
   describe "immutability" do
     it "returns frozen results with frozen collections" do
       server.respond_json(ok("page" => 1, "items" => [{ "id" => "aml-1", "risk_factors" => [{ "name" => "x" }] }]))
@@ -280,7 +399,10 @@ RSpec.describe Tronzap::Client, "response mapping" do
       "an infinite amount" => [{ "balance" => "Infinity" }, lambda(&:get_balance)],
       "a fractional integer" => [{ "resources" => { "energy" => "12.5" } }, ->(c) { c.get_address_info("TAddress") }],
       "a list that is an object" => [{ "energy" => { "price" => 1 } }, lambda(&:get_services)],
-      "a boolean that is a word" => [{ "blacklist" => "maybe" }, ->(c) { c.check_aml_status("aml-1") }]
+      "a boolean that is a word" => [{ "blacklist" => "maybe" }, ->(c) { c.check_aml_status("aml-1") }],
+      "subscription plans that are text" => ["plans", lambda(&:get_subscriptions)],
+      "subscription plans that are a number" => [42, lambda(&:get_subscriptions)],
+      "a subscription plan that is not an object" => [{ "unlimited_energy" => "x" }, lambda(&:get_subscriptions)]
     }.each do |name, (result, call)|
       it "raises InvalidResponseError for #{name}" do
         answer(result)

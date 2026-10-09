@@ -53,6 +53,10 @@ module Tronzap
       number.to_i
     end
 
+    def optional_integer(value, name)
+      value.nil? ? nil : integer(value, name)
+    end
+
     def decimal(value, name)
       optional_decimal(value, name) || BigDecimal(0)
     end

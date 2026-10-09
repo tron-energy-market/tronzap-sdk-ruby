@@ -29,6 +29,14 @@ module Tronzap
         value
       end
 
+      def non_negative_integer(value, name)
+        unless value.is_a?(Integer) && !value.negative?
+          raise ArgumentError, "#{name} must be a non-negative Integer, got #{value.inspect}"
+        end
+
+        value
+      end
+
       def boolean(value, name)
         raise ArgumentError, "#{name} must be true or false, got #{value.inspect}" unless [true, false].include?(value)
 

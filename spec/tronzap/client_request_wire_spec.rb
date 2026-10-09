@@ -103,6 +103,51 @@ RSpec.describe Tronzap::Client, "requests on the wire" do
     "get_aml_history with a filter" => [
       ->(c) { c.get_aml_history(page: 2, per_page: 50, status: "completed") },
       "/v1/aml-checks/history", { "page" => 2, "per_page" => 50, "status" => "completed" }
+    ],
+    "get_subscriptions" => [lambda(&:get_subscriptions), "/v1/subscriptions", {}],
+    "start_subscription with defaults" => [
+      ->(c) { c.start_subscription(subscription_id: "unlimited_energy", address: "TAddress") },
+      "/v1/subscription/start",
+      { "subscription_id" => "unlimited_energy",
+        "params" => { "address" => "TAddress", "duration" => 0, "transactions_limit" => 0 } }
+    ],
+    "start_subscription with every option" => [
+      lambda { |c|
+        c.start_subscription(subscription_id: "energy_pack_100", address: "TAddress", duration_days: 30,
+                             transactions_limit: 10, external_id: "sub-1", activate_address: true)
+      },
+      "/v1/subscription/start",
+      { "subscription_id" => "energy_pack_100", "external_id" => "sub-1",
+        "params" => { "address" => "TAddress", "duration" => 30, "transactions_limit" => 10,
+                      "activate_address" => true } }
+    ],
+    "start_subscription with an external id of 0" => [
+      ->(c) { c.start_subscription(subscription_id: "unlimited_energy", address: "TAddress", external_id: "0") },
+      "/v1/subscription/start",
+      { "subscription_id" => "unlimited_energy", "external_id" => "0",
+        "params" => { "address" => "TAddress", "duration" => 0, "transactions_limit" => 0 } }
+    ],
+    "check_subscription by id" => [
+      ->(c) { c.check_subscription(id: "sub-id") }, "/v1/subscription/check", { "id" => "sub-id" }
+    ],
+    "check_subscription by external id" => [
+      ->(c) { c.check_subscription(Tronzap::Requests::SubscriptionLookup.by_external_id("sub-1")) },
+      "/v1/subscription/check", { "external_id" => "sub-1" }
+    ],
+    "stop_subscription by id" => [
+      ->(c) { c.stop_subscription(Tronzap::Requests::SubscriptionLookup.by_id("sub-id")) },
+      "/v1/subscription/stop", { "id" => "sub-id" }
+    ],
+    "stop_subscription by both" => [
+      ->(c) { c.stop_subscription(id: "sub-id", external_id: "sub-1") },
+      "/v1/subscription/stop", { "id" => "sub-id", "external_id" => "sub-1" }
+    ],
+    "get_subscription_history with defaults" => [
+      lambda(&:get_subscription_history), "/v1/subscriptions/history", { "page" => 1, "per_page" => 10 }
+    ],
+    "get_subscription_history with a filter" => [
+      ->(c) { c.get_subscription_history(page: 2, per_page: 50, status: :active) },
+      "/v1/subscriptions/history", { "page" => 2, "per_page" => 50, "status" => "active" }
     ]
   }.each do |name, (call, path, expected_body)|
     it "sends #{name} to #{path}" do
