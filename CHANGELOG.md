@@ -19,6 +19,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Changed
 
+- A hash AML check without a `direction` now sends `deposit` explicitly instead of leaving the direction to the API.
+  An address check still sends a direction only when one is given.
+- The documentation of AML checks: for a hash check, `address` is the recipient address of the transaction, and
+  `direction` says which side you are on (`:deposit` if the funds were sent to your address, `:withdrawal` if you
+  sent them); the risk is scored for the counterparty.
 - The documentation of error codes 10 and 21: `INVALID_TRON_ADDRESS` is also reported when the address already has
   an active subscription, and `CANNOT_STOP_SUBSCRIPTION` covers, for example, a subscription with a transactions
   limit.

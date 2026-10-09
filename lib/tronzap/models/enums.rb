@@ -14,7 +14,9 @@ module Tronzap
     # What an AML check screens: a wallet address or a transaction hash.
     AML_CHECK_TYPES = %i[address hash].freeze
 
-    # Directions of a screened transaction: incoming (+:deposit+) or outgoing (+:withdrawal+) funds.
+    # Which side of a screened transaction you are on; the risk is scored for the counterparty. +:deposit+: the
+    # funds were sent to your address, the screened address is yours and the sender is scored. +:withdrawal+: you
+    # sent the funds, the screened address is the external recipient's and the recipient is scored.
     AML_DIRECTIONS = %i[deposit withdrawal].freeze
 
     # AML check states.

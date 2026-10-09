@@ -157,7 +157,7 @@ module Tronzap
       post("/v1/aml-checks", {}) { Responses::AmlService.list_from_api(_1) }
     end
 
-    # Starts an AML screening of an address or a transaction.
+    # Starts an AML screening of an address or a transaction. A hash check without a direction sends +deposit+.
     #
     # @overload create_aml_check(request)
     #   @param request [Requests::AmlCheck] see {Requests::AmlCheck.for_address} and {Requests::AmlCheck.for_hash}

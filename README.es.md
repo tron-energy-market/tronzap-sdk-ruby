@@ -275,6 +275,14 @@ if result.status == :completed
 end
 ```
 
+En una verificación por hash, `address` es la dirección del destinatario de la
+transacción, donde se recibieron los fondos, y `direction` indica en qué lado
+estás: `:deposit` si los fondos llegaron a tu dirección (`address` es tu
+dirección), `:withdrawal` si los enviaste tú (`address` es la dirección del
+destinatario externo). El riesgo se calcula para la contraparte: el remitente en
+un deposit, el destinatario en un withdrawal. Sin `direction`, el SDK envía
+`deposit`.
+
 `risk_score` es `nil` hasta que termina la verificación. Una verificación
 completada puede tener una puntuación de 0, que no es lo mismo que no tener
 puntuación todavía.

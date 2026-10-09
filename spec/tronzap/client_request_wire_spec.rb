@@ -88,6 +88,25 @@ RSpec.describe Tronzap::Client, "requests on the wire" do
       ->(c) { c.create_aml_check(Tronzap::Requests::AmlCheck.for_address("TRX", SpecHelpers::ADDRESS)) },
       "/v1/aml-checks/new", { "type" => "address", "network" => "TRX", "address" => SpecHelpers::ADDRESS }
     ],
+    "create_aml_check for a hash without a direction" => [
+      ->(c) { c.create_aml_check(Tronzap::Requests::AmlCheck.for_hash("BTC", "bc1Address", "TX_HASH")) },
+      "/v1/aml-checks/new",
+      { "type" => "hash", "network" => "BTC", "address" => "bc1Address", "hash" => "TX_HASH",
+        "direction" => "deposit" }
+    ],
+    "create_aml_check for a hash by keywords without a direction" => [
+      ->(c) { c.create_aml_check(type: "hash", network: "BTC", address: "bc1Address", transaction_hash: "TX_HASH") },
+      "/v1/aml-checks/new",
+      { "type" => "hash", "network" => "BTC", "address" => "bc1Address", "hash" => "TX_HASH",
+        "direction" => "deposit" }
+    ],
+    "create_aml_check for an address with a direction" => [
+      lambda { |c|
+        c.create_aml_check(type: :address, network: "TRX", address: SpecHelpers::ADDRESS, direction: :withdrawal)
+      },
+      "/v1/aml-checks/new",
+      { "type" => "address", "network" => "TRX", "address" => SpecHelpers::ADDRESS, "direction" => "withdrawal" }
+    ],
     "create_aml_check for a hash" => [
       lambda { |c|
         c.create_aml_check(Tronzap::Requests::AmlCheck.for_hash("BTC", "bc1Address", "TX_HASH", direction: :withdrawal))

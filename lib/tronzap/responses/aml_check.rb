@@ -9,7 +9,7 @@ module Tronzap
     # @!attribute [r] type
     #   @return [Symbol] what is screened, one of {Models::AML_CHECK_TYPES} or +:unknown+
     # @!attribute [r] address
-    #   @return [String] the screened wallet address
+    #   @return [String] the screened address; for a hash check, the recipient address of the transaction
     # @!attribute [r] transaction_hash
     #   @return [String, nil] the screened transaction hash, +nil+ for an address check
     # @!attribute [r] direction

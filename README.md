@@ -272,6 +272,13 @@ if result.status == :completed
 end
 ```
 
+For a hash check, `address` is the recipient address of the transaction, where
+the funds were received, and `direction` says which side you are on: `:deposit`
+if the funds were sent to your address (`address` is your address), `:withdrawal`
+if you sent them (`address` is the external recipient's address). The risk is
+scored for the counterparty: the sender of a deposit, the recipient of a
+withdrawal. Without a `direction`, the SDK sends `deposit`.
+
 `risk_score` is `nil` until screening finishes. A completed check can have a score
 of 0, which is not the same as having no score yet.
 
