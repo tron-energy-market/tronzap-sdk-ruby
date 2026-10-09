@@ -2,5 +2,5 @@
 
 module Tronzap
   # The SDK version, reported in the default +User-Agent+ header.
-  VERSION = "1.0.0"
+  VERSION = "1.1.0"
 end
