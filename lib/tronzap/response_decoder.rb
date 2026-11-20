@@ -20,8 +20,9 @@ module Tronzap
       body = text(response.body)
       document, parse_error = parse(body)
 
-      check_api_error(document, status, body) unless parse_error
-      raise http_error(status, body, response.headers) unless (200..299).cover?(status)
+      retry_after = retry_after(response.headers, parse_error ? nil : document)
+      check_api_error(document, status, body, retry_after) unless parse_error
+      raise http_error(status, body, retry_after) unless (200..299).cover?(status)
 
       result = result(document, parse_error, status, body)
       begin
@@ -55,7 +56,14 @@ module Tronzap
       [nil, e]
     end
 
-    def check_api_error(document, status, body)
+    # @param response [#status, #headers, #body]
+    # @return [Boolean] whether the status is 2xx and the body is +text/csv+
+    def csv?(response)
+      (200..299).cover?(response.status.to_i) &&
+        header(response.headers, "content-type").to_s.split(";").first.to_s.strip.casecmp?("text/csv")
+    end
+
+    def check_api_error(document, status, body, retry_after)
       unless document.is_a?(Hash)
         raise ApiError.new(UNKNOWN_API_ERROR, code: ErrorCode::AUTH_ERROR, status: status, response_body: body)
       end
@@ -63,14 +71,33 @@ module Tronzap
       code = code(document["code"])
       return if code&.zero?
 
-      raise ApiError.new(
+      raise api_error(
         string(document["error"]) || UNKNOWN_API_ERROR,
         code: code || ErrorCode::AUTH_ERROR,
         status: status,
         response_body: body,
         error_key: string(document["key"]),
-        request_id: string(document["request_id"])
+        request_id: string(document["request_id"]),
+        result: document["result"],
+        retry_after: retry_after
       )
+    end
+
+    def api_error(message, **details)
+      result = details[:result]
+      if result.is_a?(Hash)
+        case details[:code]
+        when ErrorCode::BULK_PRICE_CHANGED
+          return BulkPriceChangedError.new(message, calculation: Responses::BulkCalculation.from_api(result),
+                                                    **details)
+        when ErrorCode::BULK_NO_VALID_ITEMS
+          return BulkNoValidItemsError.new(message, rejected: Models::BulkRejectedRow.list_from_api(result["rejected"]),
+                                                    **details)
+        end
+      end
+      ApiError.new(message, **details)
+    rescue Coerce::Error
+      ApiError.new(message, **details)
     end
 
     def code(value)
@@ -88,20 +115,21 @@ module Tronzap
       end
     end
 
-    def http_error(status, body, headers)
+    def http_error(status, body, retry_after)
+      details = { status: status, response_body: body, retry_after: retry_after }
       case status
-      when 429
-        RateLimitError.new("Too many requests (HTTP 429)", status: status, response_body: body,
-                                                           retry_after: retry_after(headers))
-      when 401, 403 then UnauthorizedError.new("Unauthorized (HTTP #{status})", status: status, response_body: body)
-      when 500.. then ServerError.new("Server error (HTTP #{status})", status: status, response_body: body)
-      else HttpError.new("HTTP error #{status}", status: status, response_body: body)
+      when 429 then RateLimitError.new("Too many requests (HTTP 429)", **details)
+      when 401, 403 then UnauthorizedError.new("Unauthorized (HTTP #{status})", **details)
+      when 500.. then ServerError.new("Server error (HTTP #{status})", **details)
+      else HttpError.new("HTTP error #{status}", **details)
       end
     end
 
-    def retry_after(headers)
-      value = headers.to_h.find { |name, _| name.to_s.casecmp?("retry-after") }&.last
-      value = value.first if value.is_a?(Array)
+    def retry_after(headers, document)
+      retry_after_header(header(headers, "retry-after")) || retry_after_field(document)
+    end
+
+    def retry_after_header(value)
       return nil unless value.is_a?(String)
 
       value = value.strip
@@ -110,6 +138,16 @@ module Tronzap
       [Time.httpdate(value) - Time.now, 0.0].max
     rescue ArgumentError
       nil
+    end
+
+    def retry_after_field(document)
+      value = document["retry_after"] if document.is_a?(Hash)
+      value.to_f if value.is_a?(Integer) && !value.negative?
+    end
+
+    def header(headers, name)
+      value = headers.to_h.find { |key, _| key.to_s.casecmp?(name) }&.last
+      value.is_a?(Array) ? value.first : value
     end
   end
 end

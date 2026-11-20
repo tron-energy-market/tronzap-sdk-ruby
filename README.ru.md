@@ -190,6 +190,12 @@ HTTP-библиотек адаптер должен преобразовать �
 | `check_subscription(id: nil, external_id: nil)` | `/v1/subscription/check` | Статус подписки по id или внешнему id |
 | `stop_subscription(id: nil, external_id: nil)` | `/v1/subscription/stop` | Остановить подписку |
 | `get_subscription_history(page: 1, per_page: 10, status: nil)` | `/v1/subscriptions/history` | История подписок с пагинацией |
+| `bulk_calculate(items:, duration: 1)` | `/v1/bulk/calculate` | Проверка и расчёт строк массового заказа энергии |
+| `bulk_create(id:, external_id: nil, force: false, max_price_increase: nil, webhook_url: nil)` | `/v1/bulk/create` | Запуск массового заказа по расчёту |
+| `bulk_check(id: nil, external_id: nil)` | `/v1/bulk/check` | Статус и прогресс массового заказа |
+| `get_bulk_history(page: 1, per_page: 10)` | `/v1/bulk/history` | История массовых заказов с пагинацией |
+| `bulk_report(id: nil, external_id: nil, status: nil)` | `/v1/bulk/report` | Отчёт массового заказа по адресам в CSV |
+| `verify_webhook_signature(body, signature)` | — | Проверка `X-Signature` вебхука массового заказа |
 
 Методы с параметрами принимают либо именованные аргументы, либо объект запроса из
 `Tronzap::Requests`, поэтому запрос можно создать, проверить и передать дальше до
@@ -317,6 +323,57 @@ history = client.get_subscription_history(status: :active)
 `Tronzap::Models::SUBSCRIPTION_STATUSES`. Подписку с лимитом транзакций
 остановить нельзя (`CANNOT_STOP_SUBSCRIPTION`).
 
+### Массовые заказы
+
+Покупка энергии на 10 000 адресов одним заказом. `bulk_calculate` проверяет и
+рассчитывает строки и возвращает расчёт, действительный 10 минут; ничего не
+списывается. Некорректные строки не валят запрос: они возвращаются в `rejected` с
+номером строки. `bulk_create` запускает заказ; каждый адрес списывается в момент
+обработки, неактивированные адреса пропускаются без списания.
+
+Если цена изменилась после расчёта, `bulk_create` не запускает заказ и вызывает
+`Tronzap::BulkPriceChangedError` (код `BULK_PRICE_CHANGED`). Его `calculation` —
+новый расчёт: подтвердите новую сумму и запустите его по `id`.
+
+```ruby
+calculation = client.bulk_calculate(items: [
+  { address: "TRecipientAddress1", amount: 65000 },
+  { address: "TRecipientAddress2", amount: 131000 }
+])
+calculation.rejected.each { |row| puts "row #{row.row}: #{row.reason}" }
+
+begin
+  order = client.bulk_create(id: calculation.id, external_id: "order-42",
+                             webhook_url: "https://example.com/tronzap/bulk")
+rescue Tronzap::BulkPriceChangedError => e
+  new_calculation = e.calculation # подтвердите новую сумму и запустите его
+  order = client.bulk_create(id: new_calculation.id, external_id: "order-42")
+end
+
+order = client.bulk_check(external_id: "order-42") # опрашивайте до :completed, :partial или :failed
+csv = client.bulk_report(id: order.id)             # row,address,amount,status,reason,charged,transaction_id
+history = client.get_bulk_history(page: 1, per_page: 10)
+```
+
+Строки — это `Tronzap::Requests::BulkItem` или хеши с `address` и `amount`. Заказ
+проходит статусы из `Tronzap::Models::BULK_STATUSES`; `:completed`, `:partial` и
+`:failed` — финальные. `status:` у `bulk_report` принимает одно из
+`Tronzap::Models::BULK_ROW_STATUSES`.
+
+С `webhook_url` API отправляет на него один `POST`, когда заказ становится
+финальным. Перед тем как доверять ему, проверьте заголовок `X-Signature` по сырому
+телу, например в Sinatra:
+
+```ruby
+post "/tronzap/bulk" do
+  body = request.body.read
+  halt 401 unless client.verify_webhook_signature(body, request.env["HTTP_X_SIGNATURE"])
+
+  order = JSON.parse(body) # {"id":"01kb2m5x9qj4v8n3c7d6e5f4g3","external_id":"order-42","status":"partial"}
+  200
+end
+```
+
 ## Обработка ошибок
 
 Любой сбой вызова API — исключение `Tronzap::Error`. Перехватывайте подкласс, чтобы
@@ -326,7 +383,7 @@ history = client.get_subscription_history(status: :active)
 Tronzap::Error
 ├── Tronzap::ApiError              — API ответил ненулевым code
 ├── Tronzap::HttpError             — ответ не 2xx без payload API
-│   ├── Tronzap::RateLimitError    — HTTP 429
+│   ├── Tronzap::RateLimitError    — HTTP 429 без ответа API
 │   ├── Tronzap::UnauthorizedError — HTTP 401 или 403
 │   └── Tronzap::ServerError       — HTTP 5xx
 ├── Tronzap::InvalidResponseError  — ответ 2xx, который SDK не смог прочитать
@@ -339,8 +396,6 @@ Tronzap::Error
 `ApiError`, `HttpError` и `InvalidResponseError` содержат HTTP-статус
 (`status`) и сырое тело ответа (`response_body`). `ApiError` также содержит код
 ошибки API (`code`), ключ ошибки (`error_key`) и ID запроса (`request_id`).
-`RateLimitError#retry_after` хранит задержку из `Retry-After` в секундах, если API
-её прислал.
 
 Невалидные аргументы не являются сбоями API: они вызывают `ArgumentError` ещё до
 отправки.
@@ -361,8 +416,8 @@ rescue Tronzap::ApiError => e
   else
     warn "api error #{e.code}: #{e.message} (request #{e.request_id || "-"})"
   end
-rescue Tronzap::RateLimitError => e
-  # Подождите и повторите, через e.retry_after секунд, если API его прислал.
+rescue Tronzap::RateLimitError
+  # HTTP 429 без ответа API, например от прокси: подождите и повторите.
 rescue Tronzap::UnauthorizedError
   # Неверный токен или подпись.
 rescue Tronzap::TimeoutError, Tronzap::ServerError
@@ -378,6 +433,23 @@ end
 Ошибка API важнее HTTP-статуса: часть сбоев API возвращает со статусом 2xx, а
 часть — с 4xx или 5xx, поэтому читаемый payload с ненулевым кодом всегда
 сообщается как `Tronzap::ApiError`, а не как `Tronzap::HttpError`.
+
+`ApiError#result` — поле `result`, которое API вернул вместе с ошибкой, в виде
+разобранного JSON, или `nil`. Данные `BULK_PRICE_CHANGED` и `BULK_NO_VALID_ITEMS`
+SDK читает в `Tronzap::BulkPriceChangedError#calculation` и
+`Tronzap::BulkNoValidItemsError#rejected`; обе ошибки — это `ApiError`. Лимит
+запросов, о котором сообщает API, — это `ApiError` с `RATE_LIMITED`;
+`Tronzap::RateLimitError` — только HTTP 429 без ответа API, например от прокси.
+`ApiError` и `HttpError` содержат `retry_after` — сколько секунд ждать, из
+заголовка `Retry-After` или поля `retry_after`, или `nil`, если сервер не сообщил:
+
+```ruby
+rescue Tronzap::ApiError => e
+  raise unless e.code == Tronzap::ErrorCode::RATE_LIMITED
+
+  sleep(e.retry_after || 60)
+end
+```
 
 ### Коды ошибок API
 
@@ -397,6 +469,14 @@ end
 | 30 | `AML_CHECK_NOT_FOUND` | AML-проверка не найдена |
 | 35 | `SERVICE_NOT_AVAILABLE` | Сервис недоступен |
 | 50 | `INVALID_BANDWIDTH_AMOUNT` | Неверное количество bandwidth |
+| 90 | `BULK_NOT_FOUND` | Массовый заказ не найден |
+| 91 | `BULK_EXPIRED` | Расчёт истёк, рассчитайте заново |
+| 92 | `BULK_PRICE_CHANGED` | Цена изменилась; новый расчёт в `BulkPriceChangedError#calculation` |
+| 93 | `BULK_TOO_MANY_ITEMS` | Больше 10 000 строк |
+| 94 | `BULK_NO_VALID_ITEMS` | Нет корректных строк; они в `BulkNoValidItemsError#rejected` |
+| 95 | `BULK_RESOURCE_NOT_SUPPORTED` | Массово можно заказать только энергию |
+| 96 | `PAYLOAD_TOO_LARGE` | Слишком большое тело запроса (HTTP 413) |
+| 429 | `RATE_LIMITED` | Слишком много запросов; подождите `retry_after`, если указано |
 | 500 | `INTERNAL_SERVER_ERROR` | Внутренняя ошибка сервера: обратитесь в поддержку |
 
 Константы находятся в `Tronzap::ErrorCode`. Код, который эта версия SDK не знает,

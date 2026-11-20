@@ -190,6 +190,12 @@ libraries need to be translated by the adapter, as above.
 | `check_subscription(id: nil, external_id: nil)` | `/v1/subscription/check` | Status of a subscription, by id or external id |
 | `stop_subscription(id: nil, external_id: nil)` | `/v1/subscription/stop` | Stop a subscription |
 | `get_subscription_history(page: 1, per_page: 10, status: nil)` | `/v1/subscriptions/history` | Paginated subscription history |
+| `bulk_calculate(items:, duration: 1)` | `/v1/bulk/calculate` | Validate and price the rows of a bulk energy order |
+| `bulk_create(id:, external_id: nil, force: false, max_price_increase: nil, webhook_url: nil)` | `/v1/bulk/create` | Start a bulk order from a calculation |
+| `bulk_check(id: nil, external_id: nil)` | `/v1/bulk/check` | Status and progress of a bulk order |
+| `get_bulk_history(page: 1, per_page: 10)` | `/v1/bulk/history` | Paginated bulk order history |
+| `bulk_report(id: nil, external_id: nil, status: nil)` | `/v1/bulk/report` | Per-address report of a bulk order, as CSV |
+| `verify_webhook_signature(body, signature)` | — | Check the `X-Signature` of a bulk order webhook |
 
 Methods with parameters take either keyword arguments or a request object from
 `Tronzap::Requests`, so a request can be built, validated and passed around before
@@ -315,6 +321,58 @@ instead, and leaves `params` `nil`. A subscription moves through the statuses in
 `Tronzap::Models::SUBSCRIPTION_STATUSES`. A subscription with a transactions limit
 cannot be stopped (`CANNOT_STOP_SUBSCRIPTION`).
 
+### Bulk orders
+
+Buy energy for up to 10 000 addresses in one order. `bulk_calculate` validates and
+prices the rows and returns a calculation valid for 10 minutes; nothing is
+charged. Invalid rows do not fail the request: they come back in `rejected` with
+their row number. `bulk_create` starts the order; each address is charged when it
+is processed, and addresses that are not activated are skipped without a charge.
+
+If the price changed since the calculation, `bulk_create` does not start the order
+and raises `Tronzap::BulkPriceChangedError` (code `BULK_PRICE_CHANGED`). Its
+`calculation` is the new calculation: confirm the new total, then start it by its
+`id`.
+
+```ruby
+calculation = client.bulk_calculate(items: [
+  { address: "TRecipientAddress1", amount: 65000 },
+  { address: "TRecipientAddress2", amount: 131000 }
+])
+calculation.rejected.each { |row| puts "row #{row.row}: #{row.reason}" }
+
+begin
+  order = client.bulk_create(id: calculation.id, external_id: "order-42",
+                             webhook_url: "https://example.com/tronzap/bulk")
+rescue Tronzap::BulkPriceChangedError => e
+  new_calculation = e.calculation # confirm the new total, then start it
+  order = client.bulk_create(id: new_calculation.id, external_id: "order-42")
+end
+
+order = client.bulk_check(external_id: "order-42") # poll until :completed, :partial or :failed
+csv = client.bulk_report(id: order.id)             # row,address,amount,status,reason,charged,transaction_id
+history = client.get_bulk_history(page: 1, per_page: 10)
+```
+
+The rows are `Tronzap::Requests::BulkItem`s or hashes with `address` and `amount`.
+An order moves through the statuses in `Tronzap::Models::BULK_STATUSES`;
+`:completed`, `:partial` and `:failed` are final. `status:` of `bulk_report` takes
+one of `Tronzap::Models::BULK_ROW_STATUSES`.
+
+With `webhook_url`, the API sends one `POST` to it when the order becomes final.
+Check its `X-Signature` header against the raw body before trusting it, for
+example in Sinatra:
+
+```ruby
+post "/tronzap/bulk" do
+  body = request.body.read
+  halt 401 unless client.verify_webhook_signature(body, request.env["HTTP_X_SIGNATURE"])
+
+  order = JSON.parse(body) # {"id":"01kb2m5x9qj4v8n3c7d6e5f4g3","external_id":"order-42","status":"partial"}
+  200
+end
+```
+
 ## Error handling
 
 Every failure of an API call is a `Tronzap::Error`. Rescue a subclass to handle
@@ -324,7 +382,7 @@ one kind of failure:
 Tronzap::Error
 ├── Tronzap::ApiError              — the API answered with a non-zero code
 ├── Tronzap::HttpError             — non-2xx response without an API payload
-│   ├── Tronzap::RateLimitError    — HTTP 429
+│   ├── Tronzap::RateLimitError    — HTTP 429 without an API payload
 │   ├── Tronzap::UnauthorizedError — HTTP 401 or 403
 │   └── Tronzap::ServerError       — HTTP 5xx
 ├── Tronzap::InvalidResponseError  — 2xx response the SDK could not read
@@ -337,8 +395,7 @@ Tronzap::Error
 `ApiError`, `HttpError` and `InvalidResponseError` carry the HTTP status
 (`status`) and the raw response body (`response_body`). `ApiError` also carries
 the API error code (`code`), the error key (`error_key`) and the request ID
-(`request_id`). `RateLimitError#retry_after` holds the `Retry-After` delay in
-seconds when the API sends one.
+(`request_id`).
 
 Invalid arguments are not API failures: they raise `ArgumentError` before anything
 is sent.
@@ -359,8 +416,8 @@ rescue Tronzap::ApiError => e
   else
     warn "api error #{e.code}: #{e.message} (request #{e.request_id || "-"})"
   end
-rescue Tronzap::RateLimitError => e
-  # Back off and retry, after e.retry_after seconds if the API sent it.
+rescue Tronzap::RateLimitError
+  # HTTP 429 without an API payload, e.g. from a proxy: back off and retry.
 rescue Tronzap::UnauthorizedError
   # Bad token or signature.
 rescue Tronzap::TimeoutError, Tronzap::ServerError
@@ -377,6 +434,24 @@ An API error takes precedence over the HTTP status: the API reports some failure
 with a 2xx status and others with a 4xx or 5xx status, so a readable payload with
 a non-zero code is always reported as `Tronzap::ApiError`, never as
 `Tronzap::HttpError`.
+
+`ApiError#result` is the `result` the API sent along with the error, as parsed
+JSON, or `nil`. The SDK reads the data of `BULK_PRICE_CHANGED` and
+`BULK_NO_VALID_ITEMS` into `Tronzap::BulkPriceChangedError#calculation` and
+`Tronzap::BulkNoValidItemsError#rejected`; both are `ApiError`s. A rate limit
+reported by the API is an `ApiError` with `RATE_LIMITED`;
+`Tronzap::RateLimitError` is only an HTTP 429 without an API payload, such as one
+from a proxy. `ApiError` and `HttpError` carry `retry_after`, the seconds to wait
+from the `Retry-After` header or the `retry_after` field, `nil` when the server did
+not say how long to wait:
+
+```ruby
+rescue Tronzap::ApiError => e
+  raise unless e.code == Tronzap::ErrorCode::RATE_LIMITED
+
+  sleep(e.retry_after || 60)
+end
+```
 
 ### API error codes
 
@@ -396,6 +471,14 @@ a non-zero code is always reported as `Tronzap::ApiError`, never as
 | 30 | `AML_CHECK_NOT_FOUND` | AML check not found |
 | 35 | `SERVICE_NOT_AVAILABLE` | Service not available |
 | 50 | `INVALID_BANDWIDTH_AMOUNT` | Invalid bandwidth amount |
+| 90 | `BULK_NOT_FOUND` | Bulk order not found |
+| 91 | `BULK_EXPIRED` | The calculation expired, calculate again |
+| 92 | `BULK_PRICE_CHANGED` | The price changed; the new calculation is in `BulkPriceChangedError#calculation` |
+| 93 | `BULK_TOO_MANY_ITEMS` | More than 10 000 rows |
+| 94 | `BULK_NO_VALID_ITEMS` | No valid rows; they are in `BulkNoValidItemsError#rejected` |
+| 95 | `BULK_RESOURCE_NOT_SUPPORTED` | Only energy can be ordered in bulk |
+| 96 | `PAYLOAD_TOO_LARGE` | Request body too large (HTTP 413) |
+| 429 | `RATE_LIMITED` | Too many requests; wait `retry_after` if given |
 | 500 | `INTERNAL_SERVER_ERROR` | Internal server error – contact support |
 
 The constants live in `Tronzap::ErrorCode`. A code this SDK version does not know

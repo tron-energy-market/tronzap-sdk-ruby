@@ -109,6 +109,10 @@ module Tronzap
       object(value, name).to_h { |key, amount| [key.to_s.freeze, to_decimal(amount, "#{name}.#{key}")] }.freeze
     end
 
+    def integer_map(value, name)
+      object(value, name).to_h { |key, count| [key.to_s.freeze, integer(count, "#{name}.#{key}")] }.freeze
+    end
+
     def timestamp(value, name)
       case value
       when nil then nil

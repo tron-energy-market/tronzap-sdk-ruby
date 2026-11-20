@@ -2,10 +2,11 @@
 
 require "digest"
 require "json"
+require "openssl"
 
 module Tronzap
   # Client for the {https://docs.tronzap.com/ TronZap API}: buy TRON energy and bandwidth, activate addresses, run
-  # AML checks and manage energy subscriptions.
+  # AML checks, manage energy subscriptions and place bulk energy orders.
   #
   # A client is immutable and safe to share between threads. Create one per set of credentials.
   #
@@ -250,6 +251,91 @@ module Tronzap
       post("/v1/subscriptions/history", body) { Responses::SubscriptionHistory.from_api(_1) }
     end
 
+    # Validates and prices the rows of a bulk energy order. The calculation is valid for 10 minutes; nothing is
+    # charged. Invalid rows do not fail the request: they come back in {Responses::BulkCalculation#rejected} with
+    # their row number. When no row is valid, the call raises {BulkNoValidItemsError}.
+    #
+    # @overload bulk_calculate(request)
+    #   @param request [Requests::BulkCalculate]
+    # @overload bulk_calculate(items:, duration: 1)
+    #   @param items [Array<Requests::BulkItem, Hash>] at most 10 000 rows with +address+ and +amount+
+    # @return [Responses::BulkCalculation]
+    # @raise [ArgumentError, Error]
+    def bulk_calculate(request = nil, **params)
+      body = build(Requests::BulkCalculate, request, params).body
+      post("/v1/bulk/calculate", body) { Responses::BulkCalculation.from_api(_1) }
+    end
+
+    # Starts a bulk order from a calculation. Each address is charged when it is processed, and inactive addresses
+    # are skipped without a charge. If the price changed since the calculation, the order is not started and the
+    # call raises {BulkPriceChangedError}: confirm the new total of its calculation, then start the order with that
+    # calculation's ID. Repeating a call with the same ID or external ID returns the order already started.
+    #
+    # @overload bulk_create(request)
+    #   @param request [Requests::BulkCreate]
+    # @overload bulk_create(id:, external_id: nil, force: false, max_price_increase: nil, webhook_url: nil)
+    # @return [Responses::BulkOrder]
+    # @raise [ArgumentError, Error]
+    def bulk_create(request = nil, **params)
+      body = build(Requests::BulkCreate, request, params).body
+      post("/v1/bulk/create", body) { Responses::BulkOrder.from_api(_1) }
+    end
+
+    # The status and progress of a bulk order, by its TronZap ID or by your external ID.
+    #
+    # @overload bulk_check(request)
+    #   @param request [Requests::BulkLookup]
+    # @overload bulk_check(id: nil, external_id: nil)
+    # @return [Responses::BulkOrder]
+    # @raise [ArgumentError, Error]
+    def bulk_check(request = nil, **params)
+      body = build(Requests::BulkLookup, request, params).body
+      post("/v1/bulk/check", body) { Responses::BulkOrder.from_api(_1) }
+    end
+
+    # One page of your bulk orders, newest first.
+    #
+    # @overload get_bulk_history(request)
+    #   @param request [Requests::BulkHistory]
+    # @overload get_bulk_history(page: 1, per_page: 10)
+    # @return [Responses::BulkHistory]
+    # @raise [ArgumentError, Error]
+    def get_bulk_history(request = nil, **params)
+      body = build(Requests::BulkHistory, request, params).body
+      post("/v1/bulk/history", body) { Responses::BulkHistory.from_api(_1) }
+    end
+
+    # The per-address report of a bulk order as CSV with a header line and the columns +row+, +address+, +amount+,
+    # +status+, +reason+, +charged+ and +transaction_id+. Rows the calculation rejected are not included.
+    #
+    # @overload bulk_report(request)
+    #   @param request [Requests::BulkReport]
+    # @overload bulk_report(id: nil, external_id: nil, status: nil)
+    # @return [String] the CSV, in UTF-8
+    # @raise [ArgumentError, Error]
+    def bulk_report(request = nil, **params)
+      response = request(post_request("/v1/bulk/report", build(Requests::BulkReport, request, params).body))
+      return ResponseDecoder.text(response.body) if ResponseDecoder.csv?(response)
+
+      ResponseDecoder.decode(response) { nil }
+      raise InvalidResponseError.new("Expected a CSV report", status: response.status.to_i,
+                                                              response_body: ResponseDecoder.text(response.body))
+    end
+
+    # Checks the +X-Signature+ header of a bulk order webhook: the SHA-256 of the raw body followed by your API
+    # secret, in hex.
+    #
+    # @param body [String] the raw request body, exactly as received
+    # @param signature [String, nil] the value of the +X-Signature+ header
+    # @return [Boolean] whether the signature matches the body and your API secret
+    def verify_webhook_signature(body, signature)
+      raise ArgumentError, "body must be a String" unless body.is_a?(String)
+      return false unless signature.is_a?(String)
+
+      expected = Digest::SHA256.hexdigest(body.b + config.api_secret.b)
+      OpenSSL.secure_compare(expected, signature.strip.downcase)
+    end
+
     # @return [String] a description that leaves out the credentials
     def inspect
       "#<#{self.class.name} base_url=#{config.base_url.inspect}>"
@@ -273,16 +359,22 @@ module Tronzap
     end
 
     def post(path, payload, &)
+      ResponseDecoder.decode(request(post_request(path, payload)), &)
+    end
+
+    def post_request(path, payload)
       body = JSON.generate(payload)
-      request = HttpAdapter::Request.new(
+      HttpAdapter::Request.new(
         http_method: :post,
         url: "#{config.base_url}#{path}",
         headers: headers(body),
         body: body,
         timeout: config.timeout
       )
-      response = HttpAdapter.translate_errors { config.adapter.call(request) }
-      ResponseDecoder.decode(response, &)
+    end
+
+    def request(http_request)
+      HttpAdapter.translate_errors { config.adapter.call(http_request) }
     end
 
     def headers(body)

@@ -11,11 +11,12 @@
 #   export TRONZAP_TRANSACTION_ID=id             # optional
 #   export TRONZAP_AML_CHECK_ID=id               # optional
 #   export TRONZAP_SUBSCRIPTION_ID=id            # optional
+#   export TRONZAP_BULK_ID=id                    # optional
 #   ruby -Ilib examples/basic_usage.rb
 #
-# Setting TRONZAP_ALLOW_PURCHASES=1 additionally exercises the endpoints that create transactions and AML checks.
-# Those DEBIT THE ACCOUNT BALANCE. It is meant for verifying an integration against a development environment, and
-# it also needs TRONZAP_ADDRESS.
+# Setting TRONZAP_ALLOW_PURCHASES=1 additionally exercises the endpoints that create transactions, AML checks and a
+# one-address bulk order. Those DEBIT THE ACCOUNT BALANCE. It is meant for verifying an integration against a
+# development environment, and it also needs TRONZAP_ADDRESS.
 #
 # Setting TRONZAP_SUBSCRIPTION_PLAN as well, for example to unlimited_energy, starts a one-day subscription to that
 # plan for TRONZAP_ADDRESS and stops it straight away. Starting one CHARGES THE PLAN'S INITIAL PRICE.
@@ -43,6 +44,19 @@ end
 def print_subscription(subscription)
   puts "  #{subscription.id} #{subscription.subscription_id} #{subscription.status}, " \
        "created #{describe_time(subscription.created_at)}, expires #{describe_time(subscription.expire_at)}"
+end
+
+def print_bulk_calculation(calculation)
+  puts "  #{calculation.id} #{calculation.status}: #{calculation.accepted} accepted, " \
+       "#{calculation.rejected_count} rejected, total #{money(calculation.total_amount)}, " \
+       "expires #{describe_time(calculation.expires_at)}"
+  calculation.rejected.each { |row| puts "  rejected row #{row.row} #{row.address}: #{row.reason}" }
+end
+
+def print_bulk_order(order)
+  puts "  #{order.id} #{order.status}: #{order.processed}/#{order.total} processed, #{order.delivered} delivered, " \
+       "#{order.failed} failed, #{order.in_review} in review, #{order.skipped} skipped, " \
+       "charged #{money(order.charged_amount)} of #{money(order.total_amount)}"
 end
 
 def print_transaction(transaction)
@@ -125,6 +139,12 @@ step.call("get_subscription_history") do
   end
 end
 
+step.call("get_bulk_history") do
+  history = client.get_bulk_history(per_page: 3)
+  puts "  page #{history.page}, #{history.items.size} of #{history.total} bulk order(s)"
+  history.items.each { |order| print_bulk_order(order) }
+end
+
 address = env("TRONZAP_ADDRESS")
 optional_step.call("get_address_info", address) do |value|
   info = client.get_address_info(value)
@@ -155,6 +175,16 @@ end
 
 optional_step.call("check_subscription", env("TRONZAP_SUBSCRIPTION_ID")) do |value|
   print_subscription(client.check_subscription(id: value))
+end
+
+optional_step.call("bulk_calculate", address) do |value|
+  print_bulk_calculation(client.bulk_calculate(items: [{ address: value, amount: ENERGY },
+                                                       { address: "not-an-address", amount: ENERGY }]))
+end
+
+optional_step.call("bulk_check, bulk_report", env("TRONZAP_BULK_ID")) do |value|
+  print_bulk_order(client.bulk_check(id: value))
+  client.bulk_report(id: value).lines.first(6).each { |line| puts "  #{line.chomp}" }
 end
 
 if env("TRONZAP_ALLOW_PURCHASES") != "1"
@@ -192,6 +222,19 @@ else
   step.call("create_aml_check") do
     check = client.create_aml_check(Tronzap::Requests::AmlCheck.for_address("TRX", address))
     puts "  AML check #{check.id} is #{check.status}"
+  end
+
+  step.call("bulk_calculate, bulk_create, bulk_check") do
+    calculation = client.bulk_calculate(items: [{ address: address, amount: ENERGY }])
+    print_bulk_calculation(calculation)
+    begin
+      order = client.bulk_create(id: calculation.id, external_id: "#{run_id}-bulk")
+    rescue Tronzap::BulkPriceChangedError => e
+      puts "  price changed, new total #{money(e.calculation.total_amount)}"
+      order = client.bulk_create(id: e.calculation.id, external_id: "#{run_id}-bulk")
+    end
+    print_bulk_order(order)
+    print_bulk_order(client.bulk_check(external_id: "#{run_id}-bulk"))
   end
 
   optional_step.call("start_subscription, check_subscription, stop_subscription",

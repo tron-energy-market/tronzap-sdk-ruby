@@ -45,6 +45,64 @@ RSpec.describe Tronzap::Client, "error handling" do
         }
     end
 
+    it "keeps the result sent with an error" do
+      server.respond_json({ "code" => 93, "error" => "Too many items", "result" => { "max" => 10_000 } })
+
+      expect { client.get_balance }.to raise_error(Tronzap::ApiError) { |error|
+        expect(error.code).to eq(Tronzap::ErrorCode::BULK_TOO_MANY_ITEMS)
+        expect(error.result).to eq("max" => 10_000)
+      }
+    end
+
+    it "reports no result and no retry_after when the API sent neither" do
+      server.respond_json(payload)
+
+      expect { client.get_balance }.to raise_error(Tronzap::ApiError) { |error|
+        expect(error).to have_attributes(result: nil, retry_after: nil)
+      }
+    end
+
+    it "reads a rate limit the API reports, with Retry-After" do
+      server.respond_json({ "code" => 429, "error" => "Too many requests", "key" => "rate_limited" },
+                          status: 429, headers: { "Retry-After" => "30" })
+
+      expect { client.get_balance }.to raise_error(Tronzap::ApiError) { |error|
+        expect(error).not_to be_a(Tronzap::HttpError)
+        expect(error.code).to eq(Tronzap::ErrorCode::RATE_LIMITED)
+        expect(error.retry_after).to eq(30.0)
+      }
+    end
+
+    it "reads retry_after from the body when the header is missing" do
+      server.respond_json({ "code" => 429, "error" => "Too many requests", "retry_after" => 12 }, status: 429)
+
+      expect { client.get_balance }.to raise_error(Tronzap::ApiError) { |error| expect(error.retry_after).to eq(12.0) }
+    end
+
+    it "prefers the Retry-After header to the retry_after field" do
+      server.respond_json({ "code" => 429, "error" => "Too many requests", "retry_after" => 12 },
+                          status: 429, headers: { "Retry-After" => "3" })
+
+      expect { client.get_balance }.to raise_error(Tronzap::ApiError) { |error| expect(error.retry_after).to eq(3.0) }
+    end
+
+    [-1, "12", 1.5, true].each do |value|
+      it "ignores a retry_after field of #{value.inspect}" do
+        server.respond_json({ "code" => 429, "error" => "Too many requests", "retry_after" => value }, status: 429)
+
+        expect { client.get_balance }.to raise_error(Tronzap::ApiError) { |error| expect(error.retry_after).to be_nil }
+      end
+    end
+
+    {
+      90 => :BULK_NOT_FOUND, 91 => :BULK_EXPIRED, 92 => :BULK_PRICE_CHANGED, 93 => :BULK_TOO_MANY_ITEMS,
+      94 => :BULK_NO_VALID_ITEMS, 95 => :BULK_RESOURCE_NOT_SUPPORTED, 96 => :PAYLOAD_TOO_LARGE, 429 => :RATE_LIMITED
+    }.each do |code, name|
+      it "names error code #{code} #{name}" do
+        expect(Tronzap::ErrorCode.const_get(name)).to eq(code)
+      end
+    end
+
     it "treats a JSON object without a code as an unknown API error" do
       server.respond_json({ "result" => {} })
 
@@ -107,6 +165,22 @@ RSpec.describe Tronzap::Client, "error handling" do
 
       expect { client.get_balance }.to raise_error(Tronzap::RateLimitError) { |error|
         expect(error.retry_after).to be_within(5).of(120)
+      }
+    end
+
+    it "reads Retry-After of a 503" do
+      server.respond(503, "", "Retry-After" => "60")
+
+      expect { client.get_balance }.to raise_error(Tronzap::ServerError) { |error|
+        expect(error.retry_after).to eq(60.0)
+      }
+    end
+
+    it "reads retry_after from a JSON body with a successful code" do
+      server.respond_json({ "code" => 0, "retry_after" => 5 }, status: 429)
+
+      expect { client.get_balance }.to raise_error(Tronzap::RateLimitError) { |error|
+        expect(error.retry_after).to eq(5.0)
       }
     end
 

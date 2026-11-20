@@ -28,5 +28,13 @@ module Tronzap
     # Subscription states: +:new+ → +:pending+ → +:active+, then +:stopped+ or +:expired+; +:error+ when it could
     # not be started.
     SUBSCRIPTION_STATUSES = %i[new pending error active stopped expired].freeze
+
+    # Bulk order states: a calculation is +:draft+; a started order is +:processing+, then +:completed+ (every row
+    # delivered), +:partial+ (some rows delivered) or +:failed+ (none delivered).
+    BULK_STATUSES = %i[draft processing completed partial failed].freeze
+
+    # Row results in a bulk order report. +:in_review+ rows wait for a manual check; +:pending+ rows are not
+    # processed yet.
+    BULK_ROW_STATUSES = %i[delivered failed in_review skipped pending].freeze
   end
 end

@@ -27,19 +27,62 @@ module Tronzap
     # @return [String] the raw response body
     attr_reader :response_body
 
+    # @return [Object, nil] the +result+ the API sent along with the error, as parsed JSON (numbers as +Integer+ or
+    #   +BigDecimal+), or +nil+. {ErrorCode::BULK_PRICE_CHANGED} and {ErrorCode::BULK_NO_VALID_ITEMS} carry it;
+    #   {BulkPriceChangedError} and {BulkNoValidItemsError} also expose it typed.
+    attr_reader :result
+
+    # @return [Float, nil] seconds to wait before retrying, from the +Retry-After+ header or the +retry_after+ field,
+    #   or +nil+ when the API sent neither. {ErrorCode::RATE_LIMITED} carries it.
+    attr_reader :retry_after
+
     # @param message [String] the error message from the API
     # @param code [Integer] the numeric error code
     # @param status [Integer] the HTTP status of the response
     # @param response_body [String] the raw response body
     # @param error_key [String, nil] the error key
     # @param request_id [String, nil] the request ID
-    def initialize(message, code:, status:, response_body:, error_key: nil, request_id: nil)
+    # @param result [Object, nil] the +result+ sent with the error
+    # @param retry_after [Float, nil] seconds to wait before retrying
+    def initialize(message, code:, status:, response_body:, error_key: nil, request_id: nil, result: nil,
+                   retry_after: nil)
       super(message)
       @code = code
       @status = status
       @response_body = response_body
       @error_key = error_key
       @request_id = request_id
+      @result = result
+      @retry_after = retry_after
+    end
+  end
+
+  # The price of a bulk order changed since its calculation, so the order was not started:
+  # {ErrorCode::BULK_PRICE_CHANGED}. Confirm the new total of {#calculation}, then start the order with its ID.
+  class BulkPriceChangedError < ApiError
+    # @return [Responses::BulkCalculation] the new calculation, valid for 10 minutes
+    attr_reader :calculation
+
+    # @param message [String] the error message from the API
+    # @param calculation [Responses::BulkCalculation] the new calculation
+    # @param options [Hash] the keyword arguments of {ApiError#initialize}
+    def initialize(message, calculation:, **)
+      super(message, **)
+      @calculation = calculation
+    end
+  end
+
+  # No row of a bulk calculation is valid: {ErrorCode::BULK_NO_VALID_ITEMS}. Fix the rows in {#rejected}.
+  class BulkNoValidItemsError < ApiError
+    # @return [Array<Models::BulkRejectedRow>] the rejected rows with their row numbers and reasons
+    attr_reader :rejected
+
+    # @param message [String] the error message from the API
+    # @param rejected [Array<Models::BulkRejectedRow>] the rejected rows
+    # @param options [Hash] the keyword arguments of {ApiError#initialize}
+    def initialize(message, rejected:, **)
+      super(message, **)
+      @rejected = rejected
     end
   end
 
@@ -51,19 +94,8 @@ module Tronzap
     # @return [String] the raw response body
     attr_reader :response_body
 
-    # @param message [String] the error message
-    # @param status [Integer] the HTTP status of the response
-    # @param response_body [String] the raw response body
-    def initialize(message, status:, response_body:)
-      super(message)
-      @status = status
-      @response_body = response_body
-    end
-  end
-
-  # The API answered with HTTP 429: too many requests. Back off and retry.
-  class RateLimitError < HttpError
-    # @return [Float, nil] seconds the API asked to wait before retrying, from the +Retry-After+ header
+    # @return [Float, nil] seconds to wait before retrying, from the +Retry-After+ header or the +retry_after+ field,
+    #   or +nil+ when the server sent neither
     attr_reader :retry_after
 
     # @param message [String] the error message
@@ -71,10 +103,17 @@ module Tronzap
     # @param response_body [String] the raw response body
     # @param retry_after [Float, nil] seconds to wait before retrying
     def initialize(message, status:, response_body:, retry_after: nil)
-      super(message, status: status, response_body: response_body)
+      super(message)
+      @status = status
+      @response_body = response_body
       @retry_after = retry_after
     end
   end
+
+  # HTTP 429 without an API payload, for example from a proxy. Back off and retry.
+  #
+  # A rate limit reported by the API arrives as {ApiError} with {ErrorCode::RATE_LIMITED}.
+  class RateLimitError < HttpError; end
 
   # The API answered with HTTP 401 or 403: check the API token and secret.
   class UnauthorizedError < HttpError; end
@@ -145,6 +184,23 @@ module Tronzap
     SERVICE_NOT_AVAILABLE = 35
     # Invalid bandwidth amount.
     INVALID_BANDWIDTH_AMOUNT = 50
+    # Bulk order not found: check the order ID or external ID. A calculation that was never started is not an order.
+    BULK_NOT_FOUND = 90
+    # Bulk calculation expired: call {Client#bulk_calculate} again; a calculation is valid for 10 minutes.
+    BULK_EXPIRED = 91
+    # The price changed since the calculation: confirm the new total of {BulkPriceChangedError#calculation}, then
+    # start the order with its ID.
+    BULK_PRICE_CHANGED = 92
+    # Too many items: send at most 10 000 rows in one calculation.
+    BULK_TOO_MANY_ITEMS = 93
+    # No valid items: fix the rows in {BulkNoValidItemsError#rejected}.
+    BULK_NO_VALID_ITEMS = 94
+    # The resource cannot be ordered in bulk: only energy can.
+    BULK_RESOURCE_NOT_SUPPORTED = 95
+    # The request body is too large (HTTP 413): send fewer rows in one calculation.
+    PAYLOAD_TOO_LARGE = 96
+    # Too many requests (HTTP 429): wait {ApiError#retry_after} seconds, when given, and retry.
+    RATE_LIMITED = 429
     # Internal server error. Contact support if it persists.
     INTERNAL_SERVER_ERROR = 500
   end
